@@ -9,6 +9,8 @@
 #include "bgp_cli.h"
 #include "debug.h"
 
+#include "sds.h"
+
 #define BGP_V4 4
 #define MAX_PEER_NAME_LEN 64
 
@@ -28,8 +30,10 @@ void print_help(void);
 int main(int argc, char **argv) {
     struct cmdline_opts options;
     struct bgp_instance *bgp_i = NULL;
-    int bgp_peer_id;
+    int bgp_peer_ids[MAX_BGP_PEERS];
     char read_buffer[32];
+
+    memset(bgp_peer_ids, 0, sizeof(bgp_peer_ids));
 
     options = parse_cmdline(argc, argv);
 
@@ -37,31 +41,65 @@ int main(int argc, char **argv) {
         debug_enable();
     };
 
-    if (!options.peer) {
-        fprintf(stderr, "Error: 'peer-ip' not set\n");
-        return 1;
+    if (optind >= argc) {
+        fprintf(stderr, "- No BGP peers specified\n");
+        exit(1);
     }
+
+
     bgp_i = create_bgp_instance(options.local_asn, options.local_rid, BGP_V4);
 
-    bgp_peer_id = create_bgp_peer(
-        bgp_i,
-        options.peer,
-        options.peer_asn,
-        options.name
-    );
+    //Parse the peers
+    for(int x = optind; x < argc; x++) {
+        uint16_t asn;
+        int bgp_peer_id;
+        //Split the peer into IP:ASN
+        sds *tokens;
+        int n_tokens;
+
+        sds peer_arg = sdsnew(argv[x]);
+        tokens = sdssplitlen(peer_arg, sdslen(peer_arg), ":", 1, &n_tokens);
+
+        if (n_tokens > 2 || n_tokens < 2) {
+            fprintf(stderr, "- Incorrect peer format, please use <ip>:<asn>\n");
+            exit(1);
+        }
+
+        asn = (uint16_t) strtol(tokens[1], NULL, 10);
+
+        //Create the peer and keep track of the used ID
+        bgp_peer_id = create_bgp_peer(
+            bgp_i,
+            tokens[0],
+            asn,
+            ""
+        );
+
+        bgp_peer_ids[ bgp_peer_id ] = 1;
+
+        sdsfree(peer_arg);
+        sdsfreesplitres(tokens, n_tokens);
+    }
 
     free(options.name);
 
-    if (activate_bgp_peer(bgp_i, bgp_peer_id)) {
-        fprintf(stderr, "Could not activate peer (ID %d)\n", bgp_peer_id);
+    for(int id = 0; id < MAX_BGP_PEERS; id++) {
+        if (!bgp_peer_ids[id]) {
+            continue;
+        }
+
+        if (activate_bgp_peer(bgp_i, id)) {
+            fprintf(stderr, "- Could not activate peer (ID %d)\n", id);
+        }
     }
+
 
     fprintf(stderr, "- Press Ctrl+D to exit\n");
     while (read(0, read_buffer, 32) > 0) { };
     fprintf(stderr, "- Closing...\n");
 
-    deactivate_bgp_peer(bgp_i, bgp_peer_id);
-    free_bgp_peer(bgp_i, bgp_peer_id);
+    deactivate_all_bgp_peers(bgp_i);
+    free_all_bgp_peers(bgp_i);
     free_bgp_instance(bgp_i);
 
     return 0;
@@ -71,7 +109,6 @@ int main(int argc, char **argv) {
 
 struct cmdline_opts parse_cmdline(int argc, char **argv) {
     static struct cmdline_opts option_return;
-    size_t opt_len;
     int c;
     int *i;
 
@@ -91,9 +128,6 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
     strncpy(option_return.name, "BGP Peer", MAX_PEER_NAME_LEN);
 
     static struct option cmdline_options[] = {
-        { "peer-ip", required_argument, 0, 'p' },
-        { "name", required_argument, 0, 'n' },
-        { "peer-asn", required_argument, 0, 'a' },
         { "local-asn", required_argument, 0, 'l' },
         { "local-rid", required_argument, 0, 'r' },
         { "help", no_argument, NULL, 'h'},
@@ -114,23 +148,11 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
             case 'h':
                 print_help();
                 exit(0);
-            case 'p':
-                opt_len = strlen(optarg);
-                option_return.peer = malloc( (sizeof(char) * opt_len) + 1 );
-                strncpy(option_return.peer, optarg, opt_len + 1);
-                option_return.peer[opt_len] = '\0';
-                break;
-            case 'a':
-                option_return.peer_asn = (uint16_t) strtol(optarg, NULL, 10);
-                break;
             case 'l':
                 option_return.local_asn = (uint16_t) strtol(optarg, NULL, 10);
                 break;
             case 'r':
                 option_return.local_rid = (uint16_t) strtol(optarg, NULL, 10);
-                break;
-            case 'n':
-                strncpy(option_return.name, optarg, MAX_PEER_NAME_LEN);
                 break;
         }
     }
