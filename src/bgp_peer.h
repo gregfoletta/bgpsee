@@ -49,6 +49,7 @@ struct bgp_stats {
 struct bgp_peer {
     int active;
     char *name;
+    unsigned int id;
     uint8_t *version;
     uint16_t *local_asn;
     uint16_t peer_asn;

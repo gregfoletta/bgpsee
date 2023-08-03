@@ -99,12 +99,14 @@ struct bgp_msg *recv_msg(int socket_fd) {
     if (ret <= 0) { //EOF or error - switch to IDLE, and (eventually) cleanup
         DEBUG_PRINT("recv() header returned %lu, errno: %s\n", ret, strerror(errno));
         free(message);
-        goto gc;
+        message = NULL;
+        goto exit;
     }
 
     if (validate_header(header, message) < 0) {
         free(message);
-        return NULL;
+        message = NULL;
+        goto exit;
     }
 
     //TODO: danger area. Let's put some more thought into making sure
@@ -127,7 +129,6 @@ struct bgp_msg *recv_msg(int socket_fd) {
             return NULL;
         } 
     }
-
 
     switch (message->type) {
         case OPEN:
@@ -155,7 +156,9 @@ struct bgp_msg *recv_msg(int socket_fd) {
 
     }
 
+exit:
 
+    //Everything has been copied into the struct
     if (message_body) {
         free(message_body);
     }

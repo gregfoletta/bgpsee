@@ -117,6 +117,7 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     }
 
     peer = malloc(sizeof(*peer));
+    peer->id = new_id;
 
     if (peer == NULL) {
         DEBUG_PRINT("Unable to malloc() memory for peer %s\n", peer_name);
@@ -288,6 +289,28 @@ int get_read_fd_set(struct bgp_peer *peer, fd_set *set) {
 }
 
 
+
+
+
+
+
+
+void msg_queue_gc(struct list_head *queue) {
+    struct bgp_msg *msg = NULL;
+    struct list_head *i, *tmp;
+
+    if (list_empty(queue)) {
+        return;
+    }
+
+    list_for_each_safe(i, tmp, queue) {
+        msg = list_entry(i, struct bgp_msg, output);
+        list_del(i);
+        free_msg(msg);
+    }
+}
+
+
 /*
  bgp_peer_thread() - thread entry point for each activarted BGP thread
 */
@@ -378,11 +401,15 @@ void *bgp_peer_thread(void *param) {
         }
 
         //Output and garbage collect the messages
+        //TODO: The garbage collection and the printing need to be decoupled. There's an issue
+        //if the socket is RST before actioning, then the message doesn't get printed.
         print_bgp_msg_and_gc(peer);
     }
 
     error:
     free(set);
+    msg_queue_gc(&peer->output_q);
+
 
     return NULL;
 }
@@ -402,6 +429,7 @@ struct bgp_msg *pop_ingress_queue(struct bgp_peer *peer) {
 
     return NULL;
 }
+
 
 int fsm_state_idle(struct bgp_peer *peer, fd_set *set) {
     //Is the ConnectRetryTimer still running
