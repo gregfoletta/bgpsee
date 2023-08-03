@@ -26,6 +26,7 @@ struct bgp_instance {
     uint8_t version;
     uint16_t local_asn;
     uint32_t local_rid;
+    int n_peers;
     struct bgp_peer *peers[MAX_BGP_PEERS];
 };
 
@@ -56,23 +57,16 @@ struct bgp_instance *create_bgp_instance(uint16_t local_asn, uint32_t local_rid,
 
     DEBUG_PRINT("Created new peer (ASN %d, RID: %d, Version: %d)\n", local_asn, local_rid, version);
 
-    i = malloc(sizeof(*i));
+    i = calloc(1, sizeof(*i));
 
     if (!i) {
         return NULL;
     }
-
-    memset(i, 0, sizeof(*i));
-
-    if (!i) {
-        return NULL;
-    }
-
-    memset(i, 0, sizeof(*i));
 
     i->version = version;
     i->local_asn = local_asn;
     i->local_rid = local_rid;
+    i->n_peers = 0;
 
     return i;
 }
@@ -131,6 +125,7 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
 
     //Add the new peer to the instance
     i->peers[new_id] = peer;
+    i->n_peers++;
 
     peer->fsm_state = IDLE;
     //Copy the attributes into our structure
@@ -191,7 +186,14 @@ void free_bgp_peer(struct bgp_instance *i, unsigned int id) {
     pthread_mutex_destroy(&peer->stdout_lock);
 
     free(peer);
+    i->n_peers--;
     i->peers[id] = NULL;
+}
+
+void free_all_bgp_peers(struct bgp_instance *i) {
+    for (unsigned int id = 0; id < max_peer_id(i); id++) {
+        free_bgp_peer(i, id);
+    }
 }
 
 
@@ -221,10 +223,23 @@ int deactivate_bgp_peer(struct bgp_instance *i, unsigned int id) {
 
     peer->active = 0;
 
-    DEBUG_PRINT("Waiting for peer thread for %s to exit\n", peer->name);
+    DEBUG_PRINT("Waiting for peer ID %d to exit\n", id);
     pthread_join(peer->thread, NULL);
 
     return 0;
+}
+
+int deactivate_all_bgp_peers(struct bgp_instance *i) {
+    int ret = 0;
+
+    //Valid ID checking occurs in deactivate_bgp_peer()
+    for (unsigned int id = 0; id < max_peer_id(i); id++) {
+        if ( !deactivate_bgp_peer(i, id) ) {
+            ret--;
+        }
+    }
+
+    return ret;
 }
 
 
@@ -316,10 +331,10 @@ void *bgp_peer_thread(void *param) {
                 message = recv_msg(peer->socket.fd);
 
                 if (!message) {
-                    DEBUG_PRINT("recv_msg() errored, moving to IDLE\n");
+                    DEBUG_PRINT("recv_msg() errored, exiting\n");
                     bgp_close_socket(peer);
                     peer->fsm_state = IDLE;
-                    return NULL;
+                    goto error;
                 }
 
                 //Update peer-related fields
@@ -366,6 +381,7 @@ void *bgp_peer_thread(void *param) {
         print_bgp_msg_and_gc(peer);
     }
 
+    error:
     free(set);
 
     return NULL;

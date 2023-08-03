@@ -78,8 +78,9 @@ int parse_route_refresh(struct bgp_msg *);
 
 struct bgp_msg *recv_msg(int socket_fd) {
     struct bgp_msg *message;
-    unsigned char header[BGP_HEADER_LEN];
     unsigned char *message_body = NULL;
+
+    unsigned char header[BGP_HEADER_LEN];
     ssize_t ret;
 
     message = calloc(1, sizeof(*message));
@@ -96,11 +97,13 @@ struct bgp_msg *recv_msg(int socket_fd) {
 
     ret = recv(socket_fd, header, sizeof(header), MSG_WAITALL);
     if (ret <= 0) { //EOF or error - switch to IDLE, and (eventually) cleanup
-        DEBUG_PRINT("recv() returned %lu, errno: %s\n", ret, strerror(errno));
-        return NULL;
+        DEBUG_PRINT("recv() header returned %lu, errno: %s\n", ret, strerror(errno));
+        free(message);
+        goto gc;
     }
 
     if (validate_header(header, message) < 0) {
+        free(message);
         return NULL;
     }
 
@@ -119,6 +122,8 @@ struct bgp_msg *recv_msg(int socket_fd) {
         ret = recv(socket_fd, message_body, message->body_length, MSG_WAITALL);
         if (ret <= 0) { //EOF or error
             DEBUG_PRINT("recv() returned < 0, errno: %s\n", strerror(errno));
+            free(message);
+            free(message_body);
             return NULL;
         } 
     }
@@ -147,7 +152,7 @@ struct bgp_msg *recv_msg(int socket_fd) {
 
     if (ret < 0) {
         DEBUG_PRINT("Error parsing message");
-        return NULL;
+
     }
 
 
