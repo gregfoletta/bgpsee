@@ -132,9 +132,9 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     //Copy the attributes into our structure
     //TODO: check malloc return values
     peer->peer_ip = malloc((strlen(peer_ip) + 1) * sizeof(*peer_ip));
-    peer->name = malloc((strlen(peer_name) + 1) * sizeof(*peer_name));
     strncpy(peer->peer_ip, peer_ip, strlen(peer_ip) + 1);
-    strncpy(peer->name, peer_name, strlen(peer_name) + 1);
+
+    peer->name = sdsnew(peer_name);
 
     //Some values are global from the BGP instance
     peer->version = &i->version;
@@ -182,7 +182,7 @@ void free_bgp_peer(struct bgp_instance *i, unsigned int id) {
 
     //Free the malloc'ed attributes, free the peer and reset the slot
     free(peer->peer_ip);
-    free(peer->name);
+    sdsfree(peer->name);
 
     pthread_mutex_destroy(&peer->stdout_lock);
 

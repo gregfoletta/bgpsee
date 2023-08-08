@@ -55,16 +55,26 @@ int main(int argc, char **argv) {
         int bgp_peer_id;
         //Split the peer into IP:ASN
         sds *tokens;
+        sds peer_name;
         int n_tokens;
 
         sds peer_arg = sdsnew(argv[x]);
-        tokens = sdssplitlen(peer_arg, sdslen(peer_arg), ":", 1, &n_tokens);
+        tokens = sdssplitlen(peer_arg, sdslen(peer_arg), ",", 1, &n_tokens);
 
-        if (n_tokens > 2 || n_tokens < 2) {
-            fprintf(stderr, "- Incorrect peer format, please use <ip>:<asn>\n");
+        if (n_tokens > 3 || n_tokens < 2) {
+            fprintf(stderr, "- Incorrect peer format '%s'. Please use <ip>,<asn> or <ip>,<asn>,<name>\n", peer_arg);
             exit(1);
         }
 
+        //If there's no name create a name based on the argc position
+        if (n_tokens == 2) {
+            peer_name = sdsnew("BGP_Peer_");
+            peer_name = sdscatprintf(peer_name, "%d", x - optind);
+        }
+
+        if (n_tokens == 3) {
+            peer_name = sdsdup(tokens[2]);
+        }
         asn = (uint16_t) strtol(tokens[1], NULL, 10);
 
         //Create the peer and keep track of the used ID
@@ -72,12 +82,13 @@ int main(int argc, char **argv) {
             bgp_i,
             tokens[0],
             asn,
-            ""
+            peer_name
         );
 
         bgp_peer_ids[ bgp_peer_id ] = 1;
 
         sdsfree(peer_arg);
+        sdsfree(peer_name);
         sdsfreesplitres(tokens, n_tokens);
     }
 
