@@ -7,6 +7,7 @@
 
 #include "bgp.h"
 #include "bgp_cli.h"
+#include "log.h"
 #include "debug.h"
 
 #include "sds.h"
@@ -16,6 +17,7 @@
 
 struct cmdline_opts {
     int option_index;
+    enum LOG_LEVEL log_level;
     int debug;
     char *peer;
     char *name;
@@ -41,11 +43,12 @@ int main(int argc, char **argv) {
         debug_enable();
     };
 
+    set_log_level(options.log_level);
+
     if (optind >= argc) {
-        fprintf(stderr, "- No BGP peers specified\n");
+        log_print(LOG_ERROR, "No BGP peers specified\n");
         exit(1);
     }
-
 
     bgp_i = create_bgp_instance(options.local_asn, options.local_rid, BGP_V4);
 
@@ -62,7 +65,7 @@ int main(int argc, char **argv) {
         tokens = sdssplitlen(peer_arg, sdslen(peer_arg), ",", 1, &n_tokens);
 
         if (n_tokens > 3 || n_tokens < 2) {
-            fprintf(stderr, "- Incorrect peer format '%s'. Please use <ip>,<asn> or <ip>,<asn>,<name>\n", peer_arg);
+            log_print(LOG_ERROR, "Incorrect peer format '%s'. Please use <ip>,<asn> or <ip>,<asn>,<name>\n", peer_arg);
             exit(1);
         }
 
@@ -128,7 +131,7 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
 
     //Defaults
     option_return = (struct cmdline_opts) {
-        .debug = 0,
+        .log_level = LOG_INFO,
         .peer = NULL,
         .peer_asn = 0,
         .local_asn = 65000,
@@ -139,8 +142,9 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
     strncpy(option_return.name, "BGP Peer", MAX_PEER_NAME_LEN);
 
     static struct option cmdline_options[] = {
-        { "local-asn", required_argument, 0, 'l' },
+        { "local-asn", required_argument, 0, 'a' },
         { "local-rid", required_argument, 0, 'r' },
+        { "level", required_argument, 0, 'l'},
         { "help", no_argument, NULL, 'h'},
         { "debug", no_argument, &option_return.debug, 1},
         { 0, 0, 0, 0 }
@@ -159,11 +163,14 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
             case 'h':
                 print_help();
                 exit(0);
-            case 'l':
+            case 'a':
                 option_return.local_asn = (uint16_t) strtol(optarg, NULL, 10);
                 break;
             case 'r':
                 option_return.local_rid = (uint16_t) strtol(optarg, NULL, 10);
+                break;
+            case 'l':
+                option_return.log_level = (uint16_t) strtol(optarg, NULL, 10);
                 break;
         }
     }
