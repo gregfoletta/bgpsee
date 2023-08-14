@@ -103,14 +103,14 @@ int main(int argc, char **argv) {
         }
 
         if (activate_bgp_peer(bgp_i, id)) {
-            fprintf(stderr, "- Could not activate peer (ID %d)\n", id);
+            log_print(LOG_ERROR, "Could not activate peer (ID %d)\n", id);
         }
     }
 
 
-    fprintf(stderr, "- Press Ctrl+D to exit\n");
+    log_print(LOG_INFO, "Press Ctrl+D to exit\n");
     while (read(0, read_buffer, 32) > 0) { };
-    fprintf(stderr, "- Closing...\n");
+    log_print(LOG_INFO, "Shutting down peers..\n");
 
     deactivate_all_bgp_peers(bgp_i);
     free_all_bgp_peers(bgp_i);
@@ -144,7 +144,7 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
     static struct option cmdline_options[] = {
         { "local-asn", required_argument, 0, 'a' },
         { "local-rid", required_argument, 0, 'r' },
-        { "level", required_argument, 0, 'l'},
+        { "logging", required_argument, 0, 'l'},
         { "help", no_argument, NULL, 'h'},
         { "debug", no_argument, &option_return.debug, 1},
         { 0, 0, 0, 0 }
