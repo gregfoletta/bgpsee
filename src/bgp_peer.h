@@ -56,7 +56,9 @@ struct bgp_peer {
     uint16_t peer_asn;
     uint32_t *local_rid;
     uint32_t peer_rid;
-    char *peer_ip;
+
+    sds peer_ip;
+    sds source_ip;
 
     pthread_t thread;
 

@@ -18,6 +18,7 @@
 #include "bgp_timers.h"
 
 #include "debug.h"
+#include "log.h"
 #include "tcp_client.h"
 #include "byte_conv.h"
 
@@ -55,7 +56,7 @@ struct bgp_msg *create_bgp_open(struct bgp_peer *peer);
 struct bgp_instance *create_bgp_instance(uint16_t local_asn, uint32_t local_rid, uint8_t version) {
     struct bgp_instance *i;
 
-    DEBUG_PRINT("Created new peer (ASN %d, RID: %d, Version: %d)\n", local_asn, local_rid, version);
+    log_print(LOG_DEBUG, "Creating new peer (ASN %d, RID: %d, Version: %d)\n", local_asn, local_rid, version);
 
     i = calloc(1, sizeof(*i));
 
@@ -109,20 +110,21 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     //Find a slot in the BGP instance
     for(new_id = 0; new_id < max_peer_id(i); new_id++) {
         if (i->peers[new_id] != NULL) {
-            DEBUG_PRINT("Slot %d taken\n", new_id);
+            log_print(LOG_DEBUG, "Slot %d taken\n", new_id);
             continue;
         }
-        DEBUG_PRINT("Found slot %d available for peer %s (%s)\n", new_id, peer_name, peer_ip);
+        log_print(LOG_DEBUG, "Found slot %d available\n", new_id);
         break;
     }
 
     peer = malloc(sizeof(*peer));
-    peer->id = new_id;
 
     if (peer == NULL) {
-        DEBUG_PRINT("Unable to malloc() memory for peer %s\n", peer_name);
+        log_print(LOG_ERROR, "Unable to malloc() memory for peer %s\n", peer_name);
         return -1;
     }
+
+    peer->id = new_id;
 
     //Add the new peer to the instance
     i->peers[new_id] = peer;
@@ -130,8 +132,11 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
 
     peer->fsm_state = IDLE;
     //Copy the attributes into our structure
-    //TODO: check malloc return values
-    peer->peer_ip = malloc((strlen(peer_ip) + 1) * sizeof(*peer_ip));
+
+    //IP
+    peer->peer_ip = sdsnew(peer_ip);
+    peer->source_ip = sdsempty();
+
     strncpy(peer->peer_ip, peer_ip, strlen(peer_ip) + 1);
 
     peer->name = sdsnew(peer_name);
@@ -173,6 +178,29 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     return new_id;
 }
 
+
+unsigned int bgp_peer_source(struct bgp_instance *i, unsigned int id, const char *src_ip) {
+    struct bgp_peer *peer;
+
+    if (!(peer = get_peer_from_instance(i, id))) {
+        log_print(LOG_WARN, "Peer with ID %d does not exist for BGP instance\n");
+        return -1;
+    }
+
+    //Has a source IP already been set?
+    if (sdslen(peer->source_ip)) {
+        log_print(LOG_WARN, "Source IP for peer %s already set to '%s', no change made\n", peer->name, peer->source_ip);
+    }
+
+    //Source IP is empty at this stage
+    sdsfree(peer->source_ip);
+    peer->source_ip = sdsnew(src_ip);
+
+    return 0;
+}
+
+
+
 void free_bgp_peer(struct bgp_instance *i, unsigned int id) {
     struct bgp_peer *peer;
 
@@ -180,8 +208,11 @@ void free_bgp_peer(struct bgp_instance *i, unsigned int id) {
         return;
     }
 
+    log_print(LOG_DEBUG, "Freeing peer ID %d (%s)\n", id, peer->name);
+
     //Free the malloc'ed attributes, free the peer and reset the slot
-    free(peer->peer_ip);
+    sdsfree(peer->peer_ip);
+    sdsfree(peer->source_ip);
     sdsfree(peer->name);
 
     pthread_mutex_destroy(&peer->stdout_lock);
@@ -287,8 +318,6 @@ int get_read_fd_set(struct bgp_peer *peer, fd_set *set) {
     //Return the max file descriptor
     return max_fd;
 }
-
-
 
 
 
@@ -441,8 +470,8 @@ int fsm_state_idle(struct bgp_peer *peer, fd_set *set) {
     //Start the ConnectRetryTimer
     start_timer(peer->local_timers, ConnectRetryTimer);
     
-    peer->socket.fd = tcp_connect(peer->peer_ip, "179");
-    fprintf(stderr, " - Opening connection to %s,%d (%s)\n", peer->peer_ip, peer->peer_asn, peer->name);
+    peer->socket.fd = tcp_connect(peer->peer_ip, "179", peer->source_ip);
+    log_print(LOG_INFO, "Opening connection to %s,%d (%s)\n", peer->peer_ip, peer->peer_asn, peer->name);
 
     if (peer->socket.fd < 0) {
         DEBUG_PRINT("TCP connection to %s failed\n", peer->peer_ip);
