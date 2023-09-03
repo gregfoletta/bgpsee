@@ -10,24 +10,24 @@ BGPSee is a multi-threaded BGP client for the CLI. It's goal it to allow you to 
 
 # Version
 
-**Version 0.0.1**
+Current version is **0.0.2** ([CHAGELOG](CHANGELOG.md)
 
-This is a beta version of bgpsee, and there may be rough edges. If bgpsee crashes, I would ask you to please raise an issue and copy/paste the crash output into the issue.
+Versions < 0.1.0 are considered beta version of bgpsee. There may be rough edges, and the CLI interface is subject to major changes between versions. By default BGPSee will compile with debug symbols and a number of other compile-time sanitisation flags. If bgpsee crashes, I would ask you to please raise an issue and copy/paste the crash output into the issue.
 
 # Usage
 
 ```
-./bgpsee <--peer-ip ip> <--peer-asn asn> [--name peer_name] [--local-asn asn] [--local-rid ip] [--debug] [--help] 
-```
-- --peer-asn <asn>: the autonomous system number of the router you are peering with.
-- --peer-ip <ip>: the IP address of the upstream router you are peering with.
-- --name <string>: a human-readable name for the peer. If not given, "BGP Peer" is used.
-- --local-asn <asn>: your local autonomous system number. If not provided, 65000 is used.
-- --local-rid <ip>: your local router ID. If not provided, 1.1.1.1 is used.
-- --debug: provided additional information on the underlying mechanics.
-- --help: prints a help message.
+./bgpsee [options...] <peer> [<peer> ...]\n"
+    -s, --source <ip>           IP BGP connection is sourced from
+    -a, --asn <asn>             Local ASN of bgpsee. If not provided 65000 will be used
+    -r, --rid <ip>              Local router ID of bgpsee. If not provided 1.1.1.1 will be used
+    -l, --logging <lvl>         Logging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug
+    -h, --help\                 Print a help message
 
-# Examples
+<peer> formats: <ip>,<asn> or <ip>,<asn>,<name>
+```
+
+# Example
 
 The first example is a simple peering with an upstream router. We see
 
