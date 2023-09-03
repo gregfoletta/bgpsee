@@ -1,4 +1,5 @@
 enum LOG_LEVEL {
+    LOG_NONE,
     LOG_ERROR,
     LOG_WARN,
     LOG_INFO,

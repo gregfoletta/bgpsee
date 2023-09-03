@@ -186,9 +186,10 @@ void print_help(void) {
         "-s, --source <ip>\tIP to source BGP connection from\n"
         "-a, --asn <asn>\t\tLocal ASN of bgpsee. If not provided 65000 will be used.\n"
         "-r, --rid <ip>\t\tLocal router ID of bgpsee. If not provided 1.1.1.1 will be used.\n"
+        "-l, --logging <level>\tLogging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug \n"
         "-h, --help\t\tPrint this help message\n"
         "\n"
-        "<peer> formats: <ip>,<asn> or <ip>,<asn>,<name>\n";
+        "<peer> formats: <ip>,<asn> or <ip>,<asn>,<name>\n\n";
 
 
     printf("%s", help_message);

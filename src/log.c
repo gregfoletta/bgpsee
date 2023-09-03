@@ -11,7 +11,7 @@ enum LOG_LEVEL current_level = LOG_INFO;
 sds log_prefix(enum LOG_LEVEL);
 
 void set_log_level(enum LOG_LEVEL level) {
-    if (level < LOG_ERROR || level > LOG_DEBUG) {
+    if (level < LOG_NONE || level > LOG_DEBUG) {
         return;
     }
 
@@ -54,6 +54,8 @@ sds log_prefix(enum LOG_LEVEL level) {
     sds prefix;
 
     switch (level) {
+        case LOG_NONE:
+            break;
         case LOG_ERROR:
             //Bold Red
             prefix = sdsnew("\033[1;31m- ");
@@ -68,7 +70,7 @@ sds log_prefix(enum LOG_LEVEL level) {
             break;
         case LOG_DEBUG:
             //Bold Blue then reset
-            prefix = sdsnew("\033[1;36m- \033[0;m");
+            prefix = sdsnew("\033[1;36m+ \033[0;m");
             break;
     };
 
