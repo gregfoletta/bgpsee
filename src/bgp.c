@@ -18,6 +18,7 @@
 #include "bgp_timers.h"
 
 #include "debug.h"
+#include "log.h"
 #include "tcp_client.h"
 #include "byte_conv.h"
 
@@ -26,6 +27,7 @@ struct bgp_instance {
     uint8_t version;
     uint16_t local_asn;
     uint32_t local_rid;
+    int n_peers;
     struct bgp_peer *peers[MAX_BGP_PEERS];
 };
 
@@ -54,25 +56,18 @@ struct bgp_msg *create_bgp_open(struct bgp_peer *peer);
 struct bgp_instance *create_bgp_instance(uint16_t local_asn, uint32_t local_rid, uint8_t version) {
     struct bgp_instance *i;
 
-    DEBUG_PRINT("Created new peer (ASN %d, RID: %d, Version: %d)\n", local_asn, local_rid, version);
+    log_print(LOG_DEBUG, "Creating new peer (ASN %d, RID: %d, Version: %d)\n", local_asn, local_rid, version);
 
-    i = malloc(sizeof(*i));
-
-    if (!i) {
-        return NULL;
-    }
-
-    memset(i, 0, sizeof(*i));
+    i = calloc(1, sizeof(*i));
 
     if (!i) {
         return NULL;
     }
-
-    memset(i, 0, sizeof(*i));
 
     i->version = version;
     i->local_asn = local_asn;
     i->local_rid = local_rid;
+    i->n_peers = 0;
 
     return i;
 }
@@ -115,30 +110,36 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     //Find a slot in the BGP instance
     for(new_id = 0; new_id < max_peer_id(i); new_id++) {
         if (i->peers[new_id] != NULL) {
-            DEBUG_PRINT("Slot %d taken\n", new_id);
+            log_print(LOG_DEBUG, "Slot %d taken\n", new_id);
             continue;
         }
-        DEBUG_PRINT("Found slot %d available for peer %s (%s)\n", new_id, peer_name, peer_ip);
+        log_print(LOG_DEBUG, "Found slot %d available\n", new_id);
         break;
     }
 
     peer = malloc(sizeof(*peer));
 
     if (peer == NULL) {
-        DEBUG_PRINT("Unable to malloc() memory for peer %s\n", peer_name);
+        log_print(LOG_ERROR, "Unable to malloc() memory for peer %s\n", peer_name);
         return -1;
     }
 
+    peer->id = new_id;
+
     //Add the new peer to the instance
     i->peers[new_id] = peer;
+    i->n_peers++;
 
     peer->fsm_state = IDLE;
     //Copy the attributes into our structure
-    //TODO: check malloc return values
-    peer->peer_ip = malloc((strlen(peer_ip) + 1) * sizeof(*peer_ip));
-    peer->name = malloc((strlen(peer_name) + 1) * sizeof(*peer_name));
+
+    //IP
+    peer->peer_ip = sdsnew(peer_ip);
+    peer->source_ip = sdsempty();
+
     strncpy(peer->peer_ip, peer_ip, strlen(peer_ip) + 1);
-    strncpy(peer->name, peer_name, strlen(peer_name) + 1);
+
+    peer->name = sdsnew(peer_name);
 
     //Some values are global from the BGP instance
     peer->version = &i->version;
@@ -177,6 +178,29 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     return new_id;
 }
 
+
+unsigned int bgp_peer_source(struct bgp_instance *i, unsigned int id, const char *src_ip) {
+    struct bgp_peer *peer;
+
+    if (!(peer = get_peer_from_instance(i, id))) {
+        log_print(LOG_WARN, "Peer with ID %d does not exist for BGP instance\n");
+        return -1;
+    }
+
+    //Has a source IP already been set?
+    if (sdslen(peer->source_ip)) {
+        log_print(LOG_WARN, "Source IP for peer %s already set to '%s', no change made\n", peer->name, peer->source_ip);
+    }
+
+    //Source IP is empty at this stage
+    sdsfree(peer->source_ip);
+    peer->source_ip = sdsnew(src_ip);
+
+    return 0;
+}
+
+
+
 void free_bgp_peer(struct bgp_instance *i, unsigned int id) {
     struct bgp_peer *peer;
 
@@ -184,14 +208,24 @@ void free_bgp_peer(struct bgp_instance *i, unsigned int id) {
         return;
     }
 
+    log_print(LOG_DEBUG, "Freeing peer ID %d (%s)\n", id, peer->name);
+
     //Free the malloc'ed attributes, free the peer and reset the slot
-    free(peer->peer_ip);
-    free(peer->name);
+    sdsfree(peer->peer_ip);
+    sdsfree(peer->source_ip);
+    sdsfree(peer->name);
 
     pthread_mutex_destroy(&peer->stdout_lock);
 
     free(peer);
+    i->n_peers--;
     i->peers[id] = NULL;
+}
+
+void free_all_bgp_peers(struct bgp_instance *i) {
+    for (unsigned int id = 0; id < max_peer_id(i); id++) {
+        free_bgp_peer(i, id);
+    }
 }
 
 
@@ -205,7 +239,7 @@ int activate_bgp_peer(struct bgp_instance *i, unsigned int id) {
     peer->active = 1;
 
     if (pthread_create(&peer->thread, NULL, bgp_peer_thread, peer) != 0) {
-        DEBUG_PRINT("Unable to create peer thread\n");
+        log_print(LOG_DEBUG, "Unable to create peer thread\n");
         return -1;
     }
 
@@ -221,10 +255,23 @@ int deactivate_bgp_peer(struct bgp_instance *i, unsigned int id) {
 
     peer->active = 0;
 
-    DEBUG_PRINT("Waiting for peer thread for %s to exit\n", peer->name);
+    log_print(LOG_DEBUG, "Waiting for peer ID %d to exit\n", id);
     pthread_join(peer->thread, NULL);
 
     return 0;
+}
+
+int deactivate_all_bgp_peers(struct bgp_instance *i) {
+    int ret = 0;
+
+    //Valid ID checking occurs in deactivate_bgp_peer()
+    for (unsigned int id = 0; id < max_peer_id(i); id++) {
+        if ( !deactivate_bgp_peer(i, id) ) {
+            ret--;
+        }
+    }
+
+    return ret;
 }
 
 
@@ -273,6 +320,26 @@ int get_read_fd_set(struct bgp_peer *peer, fd_set *set) {
 }
 
 
+
+
+
+
+void msg_queue_gc(struct list_head *queue) {
+    struct bgp_msg *msg = NULL;
+    struct list_head *i, *tmp;
+
+    if (list_empty(queue)) {
+        return;
+    }
+
+    list_for_each_safe(i, tmp, queue) {
+        msg = list_entry(i, struct bgp_msg, output);
+        list_del(i);
+        free_msg(msg);
+    }
+}
+
+
 /*
  bgp_peer_thread() - thread entry point for each activarted BGP thread
 */
@@ -281,15 +348,15 @@ void *bgp_peer_thread(void *param) {
     struct bgp_peer *peer = param;
     struct bgp_msg *message = NULL;
     fd_set *set;
-    int max_fd, readable_fds;
+    int max_fd, readable_fds, ret;
     struct timeval select_timeout;
 
-    DEBUG_PRINT("RW Thread Active\n");
+    log_print(LOG_DEBUG, "RW Thread Active\n");
 
-    set = malloc(sizeof(*set));
+    set = calloc(sizeof(*set), 1);
 
     if (!set) {
-        DEBUG_PRINT("Unable to allocate space for FD_SET\n");
+        log_print(LOG_DEBUG, "Unable to allocate space for FD_SET\n");
         return NULL;
     }
 
@@ -297,6 +364,7 @@ void *bgp_peer_thread(void *param) {
         //Reset select timer
         select_timeout = (struct timeval){ .tv_sec = 1, .tv_usec = 0 };
         max_fd = get_read_fd_set(peer, set);
+
         //TODO: handle signals
         readable_fds = select(max_fd + 1, set, NULL, NULL, &select_timeout);
         /*
@@ -308,31 +376,31 @@ void *bgp_peer_thread(void *param) {
             this into a bitfield for multiple timers.
         */
         if (readable_fds > 0) {
-            DEBUG_PRINT("select() is readable (FD %d)\n", readable_fds);
+            log_print(LOG_DEBUG, "select() is readable (FD %d)\n", readable_fds);
 
             //Did we receive messages?
             if (FD_ISSET(peer->socket.fd, set)) {
-                DEBUG_PRINT("Calling recv_msg() on socket\n");
+                log_print(LOG_DEBUG, "Calling recv_msg() on socket\n");
                 message = recv_msg(peer->socket.fd);
 
                 if (!message) {
-                    DEBUG_PRINT("recv_msg() errored, moving to IDLE\n");
+                    log_print(LOG_ERROR, "recv_msg() errored, exiting\n");
                     bgp_close_socket(peer);
                     peer->fsm_state = IDLE;
-                    return NULL;
+                    goto error;
                 }
 
                 //Update peer-related fields
                 message->peer_name = peer->name;
                 message->id = peer->stats.total++;
 
-                DEBUG_PRINT("Adding to ingress and output queues\n");
+                log_print(LOG_DEBUG, "Adding to ingress and output queues\n");
                 list_add_tail(&message->ingress, &peer->ingress_q);
                 list_add_tail(&message->output, &peer->output_q);
             }
         } else if (readable_fds < 0) {
-            DEBUG_PRINT("select() error, peer thread returning\n");
-            return NULL;
+            log_print(LOG_ERROR, "select() error, peer thread returning\n");
+            goto error;
         }
 
         /* 
@@ -341,32 +409,42 @@ void *bgp_peer_thread(void *param) {
         */
         switch(peer->fsm_state) {
             case IDLE: 
-                fsm_state_idle(peer, set);
+                ret = fsm_state_idle(peer, set);
                 break;
             case CONNECT: 
-                fsm_state_connect(peer);
+                ret = fsm_state_connect(peer);
                 break;
             case ACTIVE: 
-                fsm_state_active(peer);
+                ret = fsm_state_active(peer);
                 break;
             case OPENSENT: 
-                fsm_state_opensent(peer, message, set);
+                ret = fsm_state_opensent(peer, message, set);
                 break;
             case OPENCONFIRM:
-                fsm_state_openconfirm(peer, message, set);
+                ret = fsm_state_openconfirm(peer, message, set);
                 break;
             case ESTABLISHED:
-                fsm_state_established(peer, message, set);
+                ret = fsm_state_established(peer, message, set);
                 break;
             default:
-                DEBUG_PRINT("Invalid FSM state for peer %s: %d\n", peer->name, peer->fsm_state);
+                log_print(LOG_DEBUG, "Invalid FSM state for peer %s: %d\n", peer->name, peer->fsm_state);
+        }
+
+        if (ret < 0) {
+            goto error;
         }
 
         //Output and garbage collect the messages
+        //TODO: The garbage collection and the printing need to be decoupled. There's an issue
+        //if the socket is RST before actioning, then the message doesn't get printed.
         print_bgp_msg_and_gc(peer);
     }
 
+    error:
     free(set);
+    msg_queue_gc(&peer->output_q);
+
+    log_print(LOG_INFO, "Peer %s has closed\n", peer->name);
 
     return NULL;
 }
@@ -387,28 +465,31 @@ struct bgp_msg *pop_ingress_queue(struct bgp_peer *peer) {
     return NULL;
 }
 
+
 int fsm_state_idle(struct bgp_peer *peer, fd_set *set) {
     //Is the ConnectRetryTimer still running
     //if( !timer_has_fired(peer->local_timers, ConnectRetryTimer, set) ) {
-    //    DEBUG_PRINT("ConnectRetryTimer running, no TCP initialisation\n");
+    //    log_print(LOG_DEBUG, "ConnectRetryTimer running, no TCP initialisation\n");
     //    return 1;
     //}
 
     //Start the ConnectRetryTimer
     start_timer(peer->local_timers, ConnectRetryTimer);
     
-    peer->socket.fd = tcp_connect(peer->peer_ip, "179");
-    fprintf(stderr, " - Opening connection to %s,%d (%s)\n", peer->peer_ip, peer->peer_asn, peer->name);
+    log_print(LOG_INFO, "Opening connection to %s,%d (%s)\n", peer->peer_ip, peer->peer_asn, peer->name);
+    peer->socket.fd = tcp_connect(peer->peer_ip, "179", peer->source_ip);
 
     if (peer->socket.fd < 0) {
-        DEBUG_PRINT("TCP connection to %s failed\n", peer->peer_ip);
+        log_print(LOG_DEBUG, "TCP connection to %s failed\n", peer->peer_ip);
         bgp_close_socket(peer);
         return -1;
         //Update timer
+    } else {
+        log_print(LOG_INFO, "Connection to %s successful\n", peer->name);
     }
 
     //TCP connection was successful
-    DEBUG_PRINT("TCP connection to %s successful\n", peer->peer_ip);
+    log_print(LOG_DEBUG, "TCP connection to %s successful\n", peer->peer_ip);
     disarm_timer(peer->local_timers, ConnectRetryTimer);
     peer->fsm_state = CONNECT;
 
@@ -416,10 +497,10 @@ int fsm_state_idle(struct bgp_peer *peer, fd_set *set) {
 }
 
 int fsm_state_connect(struct bgp_peer *peer) {
-    DEBUG_PRINT("Peer %s FSM state: CONNECT\n", peer->name);
+    log_print(LOG_DEBUG, "Peer %s FSM state: CONNECT\n", peer->name);
 
     //TODO: fix hold timer
-    DEBUG_PRINT("Sending OPEN to peer %s\n", peer->name);
+    log_print(LOG_DEBUG, "Sending OPEN to peer %s\n", peer->name);
     send_open(peer->socket.fd, *peer->version, *peer->local_asn, 30, *peer->local_rid);
 
     start_timer(peer->local_timers, HoldTimer);
@@ -431,17 +512,17 @@ int fsm_state_connect(struct bgp_peer *peer) {
 //We don't set up a listening socket at the moment, so we should never
 //get to state ACTIVE
 int fsm_state_active(struct bgp_peer *peer) {
-    DEBUG_PRINT("Peer %s FSM state: ACTIVE\n", peer->name);
+    log_print(LOG_DEBUG, "Peer %s FSM state: ACTIVE\n", peer->name);
     return 0;
 }
 
 int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) {
     struct bgp_msg *message = NULL;
-    DEBUG_PRINT("Peer %s FSM state: OPENSENT\n", peer->name);
+    log_print(LOG_DEBUG, "Peer %s FSM state: OPENSENT\n", peer->name);
 
     //Did the hold timer expire?
     if( which_timer_fired(peer->local_timers, set) == HoldTimer ) {
-        DEBUG_PRINT("Our HoldTimer fired in OPENSENT. Closing connection and moving to IDLE\n");
+        log_print(LOG_DEBUG, "Our HoldTimer fired in OPENSENT. Closing connection and moving to IDLE\n");
         //TODO: Send a notifcation
         peer->connect_retry_counter++;
         disarm_timer(peer->local_timers, ConnectRetryTimer);
@@ -457,11 +538,11 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
     //TODO: Need to free this message allocation somewhere
     if (message) {
         if (message->type == OPEN) {
-            DEBUG_PRINT("Checking OPEN for correctness\n");
+            log_print(LOG_DEBUG, "Checking OPEN for correctness\n");
             //TODO: Check the peer's OPEN parameters are correct
             
             //Sending a keepalive
-            DEBUG_PRINT("Sending keepalive\n");
+            log_print(LOG_DEBUG, "Sending keepalive\n");
             send_keepalive(peer->socket.fd);
             //TODO: confirm timers
             //TODO :HoldTimer needs to be negotiated value
@@ -482,7 +563,7 @@ int fsm_state_openconfirm(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
 
     if (message) {
         if (message->type == KEEPALIVE) {
-            DEBUG_PRINT("Received keepalive in OPENCONFIRM, moving to ESTABLISHED\n");
+            log_print(LOG_DEBUG, "Received keepalive in OPENCONFIRM, moving to ESTABLISHED\n");
             peer->fsm_state = ESTABLISHED;
         }
     }
@@ -495,7 +576,7 @@ int fsm_state_established(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
 
     //If the Keepalive timer has fired, send a keepalive
     if ( timer_has_fired(peer->local_timers, KeepaliveTimer, set) ) {
-        DEBUG_PRINT("Keepalive timer fired, sending KEEPALIVE\n");
+        log_print(LOG_DEBUG, "Keepalive timer fired, sending KEEPALIVE\n");
         send_keepalive(peer->socket.fd);
     }
 
@@ -504,7 +585,7 @@ int fsm_state_established(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
     if (message) {
         switch (message->type) {
             case KEEPALIVE:
-                DEBUG_PRINT("Received KEEPALIVE, resetting HoldTimer\n");
+                log_print(LOG_DEBUG, "Received KEEPALIVE, resetting HoldTimer\n");
                 start_timer(peer->local_timers, HoldTimer);
                 break;
         }

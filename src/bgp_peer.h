@@ -5,6 +5,7 @@
 #include "bgp_timers.h"
 #include "list.h"
 #include "tcp_client.h"
+#include "sds.h"
 
 
 struct bgp_msg;
@@ -48,13 +49,16 @@ struct bgp_stats {
 
 struct bgp_peer {
     int active;
-    char *name;
+    sds name;
+    unsigned int id;
     uint8_t *version;
     uint16_t *local_asn;
     uint16_t peer_asn;
     uint32_t *local_rid;
     uint32_t peer_rid;
-    char *peer_ip;
+
+    sds peer_ip;
+    sds source_ip;
 
     pthread_t thread;
 

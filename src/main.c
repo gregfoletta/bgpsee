@@ -7,16 +7,20 @@
 
 #include "bgp.h"
 #include "bgp_cli.h"
+#include "log.h"
 #include "debug.h"
+
+#include "sds.h"
 
 #define BGP_V4 4
 #define MAX_PEER_NAME_LEN 64
 
 struct cmdline_opts {
     int option_index;
-    int debug;
+    enum LOG_LEVEL log_level;
     char *peer;
     char *name;
+    sds source_ip;
     uint16_t peer_asn;
     uint16_t local_asn;
     uint32_t local_rid;
@@ -28,40 +32,86 @@ void print_help(void);
 int main(int argc, char **argv) {
     struct cmdline_opts options;
     struct bgp_instance *bgp_i = NULL;
-    int bgp_peer_id;
+    int bgp_peer_ids[MAX_BGP_PEERS];
     char read_buffer[32];
+
+    memset(bgp_peer_ids, 0, sizeof(bgp_peer_ids));
 
     options = parse_cmdline(argc, argv);
 
-    if (options.debug) {
-        debug_enable();
-    };
+    set_log_level(options.log_level);
 
-    if (!options.peer) {
-        fprintf(stderr, "Error: 'peer-ip' not set\n");
-        return 1;
+    if (optind >= argc) {
+        log_print(LOG_ERROR, "No BGP peers specified\n");
+        exit(1);
     }
+
     bgp_i = create_bgp_instance(options.local_asn, options.local_rid, BGP_V4);
 
-    bgp_peer_id = create_bgp_peer(
-        bgp_i,
-        options.peer,
-        options.peer_asn,
-        options.name
-    );
+    //Parse the peers
+    for(int x = optind; x < argc; x++) {
+        uint16_t asn;
+        int bgp_peer_id;
+        //Split the peer into IP:ASN
+        sds *tokens;
+        sds peer_name;
+        int n_tokens;
+
+        sds peer_arg = sdsnew(argv[x]);
+        tokens = sdssplitlen(peer_arg, sdslen(peer_arg), ",", 1, &n_tokens);
+
+        if (n_tokens > 3 || n_tokens < 2) {
+            log_print(LOG_ERROR, "Incorrect peer format '%s'. Please use <ip>,<asn> or <ip>,<asn>,<name>\n", peer_arg);
+            exit(1);
+        }
+
+        //If there's no name create a name based on the argc position
+        if (n_tokens == 2) {
+            peer_name = sdsnew("BGP_Peer_");
+            peer_name = sdscatprintf(peer_name, "%d", x - optind);
+        }
+
+        if (n_tokens == 3) {
+            peer_name = sdsdup(tokens[2]);
+        }
+        asn = (uint16_t) strtol(tokens[1], NULL, 10);
+
+        //Create the peer and keep track of the used ID
+        bgp_peer_id = create_bgp_peer(
+            bgp_i,
+            tokens[0],
+            asn,
+            peer_name
+        );
+
+        bgp_peer_source(bgp_i, bgp_peer_id, options.source_ip);
+
+        bgp_peer_ids[ bgp_peer_id ] = 1;
+
+        sdsfree(peer_arg);
+        sdsfree(peer_name);
+        sdsfreesplitres(tokens, n_tokens);
+    }
 
     free(options.name);
 
-    if (activate_bgp_peer(bgp_i, bgp_peer_id)) {
-        fprintf(stderr, "Could not activate peer (ID %d)\n", bgp_peer_id);
+    for(int id = 0; id < MAX_BGP_PEERS; id++) {
+        if (!bgp_peer_ids[id]) {
+            continue;
+        }
+
+        if (activate_bgp_peer(bgp_i, id)) {
+            log_print(LOG_ERROR, "Could not activate peer (ID %d)\n", id);
+        }
     }
 
-    fprintf(stderr, "- Press Ctrl+D to exit\n");
-    while (read(0, read_buffer, 32) > 0) { };
-    fprintf(stderr, "- Closing...\n");
 
-    deactivate_bgp_peer(bgp_i, bgp_peer_id);
-    free_bgp_peer(bgp_i, bgp_peer_id);
+    log_print(LOG_INFO, "Press Ctrl+D to exit\n");
+    while (read(0, read_buffer, 32) > 0) { };
+    log_print(LOG_INFO, "Shutting down peers..\n");
+
+    deactivate_all_bgp_peers(bgp_i);
+    free_all_bgp_peers(bgp_i);
     free_bgp_instance(bgp_i);
 
     return 0;
@@ -71,7 +121,6 @@ int main(int argc, char **argv) {
 
 struct cmdline_opts parse_cmdline(int argc, char **argv) {
     static struct cmdline_opts option_return;
-    size_t opt_len;
     int c;
     int *i;
 
@@ -80,7 +129,8 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
 
     //Defaults
     option_return = (struct cmdline_opts) {
-        .debug = 0,
+        .source_ip = NULL,
+        .log_level = LOG_INFO,
         .peer = NULL,
         .peer_asn = 0,
         .local_asn = 65000,
@@ -91,18 +141,16 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
     strncpy(option_return.name, "BGP Peer", MAX_PEER_NAME_LEN);
 
     static struct option cmdline_options[] = {
-        { "peer-ip", required_argument, 0, 'p' },
-        { "name", required_argument, 0, 'n' },
-        { "peer-asn", required_argument, 0, 'a' },
-        { "local-asn", required_argument, 0, 'l' },
-        { "local-rid", required_argument, 0, 'r' },
+        { "source", required_argument, 0, 's' },
+        { "asn", required_argument, 0, 'a' },
+        { "rid", required_argument, 0, 'r' },
+        { "logging", required_argument, 0, 'l'},
         { "help", no_argument, NULL, 'h'},
-        { "debug", no_argument, &option_return.debug, 1},
         { 0, 0, 0, 0 }
     };
 
     while (1) {
-        c = getopt_long(argc, argv, "", cmdline_options, i);
+        c = getopt_long(argc, argv, "s:a:r:l:h", cmdline_options, i);
 
         if (c == -1) {
             break;
@@ -114,23 +162,17 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
             case 'h':
                 print_help();
                 exit(0);
-            case 'p':
-                opt_len = strlen(optarg);
-                option_return.peer = malloc( (sizeof(char) * opt_len) + 1 );
-                strncpy(option_return.peer, optarg, opt_len + 1);
-                option_return.peer[opt_len] = '\0';
+            case 's':
+                option_return.source_ip = sdsnew(optarg);
                 break;
             case 'a':
-                option_return.peer_asn = (uint16_t) strtol(optarg, NULL, 10);
-                break;
-            case 'l':
                 option_return.local_asn = (uint16_t) strtol(optarg, NULL, 10);
                 break;
             case 'r':
                 option_return.local_rid = (uint16_t) strtol(optarg, NULL, 10);
                 break;
-            case 'n':
-                strncpy(option_return.name, optarg, MAX_PEER_NAME_LEN);
+            case 'l':
+                option_return.log_level = (uint16_t) strtol(optarg, NULL, 10);
                 break;
         }
     }
@@ -140,9 +182,15 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
 
 
 void print_help(void) {
-    char *help_message = "Usage: bgpsee [params]\n"
+    char *help_message = "Usage: bgpsee [options...] <peer> [<peer> ...]\n"
+        "-s, --source <ip>\tIP to source BGP connection from\n"
+        "-a, --asn <asn>\t\tLocal ASN of bgpsee. If not provided 65000 will be used.\n"
+        "-r, --rid <ip>\t\tLocal router ID of bgpsee. If not provided 1.1.1.1 will be used.\n"
+        "-l, --logging <level>\tLogging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug \n"
+        "-h, --help\t\tPrint this help message\n"
         "\n"
-        "foo";
+        "<peer> formats: <ip>,<asn> or <ip>,<asn>,<name>\n\n";
+
 
     printf("%s", help_message);
 }
