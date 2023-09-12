@@ -10,7 +10,7 @@ BGPSee is a multi-threaded BGP client for the CLI. It's goal it to allow you to 
 
 # Version
 
-Current version is **0.0.2** ([CHAGELOG](CHANGELOG.md)
+Current version is **0.0.2** (see [CHANGELOG](CHANGELOG.md) for further information).
 
 Versions < 0.1.0 are considered beta version of bgpsee. There may be rough edges, and the CLI interface is subject to major changes between versions. By default BGPSee will compile with debug symbols and a number of other compile-time sanitisation flags. If bgpsee crashes, I would ask you to please raise an issue and copy/paste the crash output into the issue.
 
@@ -54,12 +54,12 @@ We see a connection to an external router, with the peer router sending an OPEN 
 
 To build simply download/clone and build using make:
 ```
-git clone https://github.com/gregfoletta/bgpsee.git
+git clone --recurse-submodules https://github.com/gregfoletta/bgpsee.git
 cd bgpsee
 make
 ```
 
-This builds a `bgpsee` executable in the root directory. There is no make install.
+This builds a *bgpsee* executable in the root directory. There is no make install.
 
 # Roadmap
 
