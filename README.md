@@ -29,52 +29,27 @@ Versions < 0.1.0 are considered beta version of bgpsee. There may be rough edges
 
 # Example
 
-The first example is a simple peering with an upstream router. We see
-
-- The OPEN message
-- A KEEPALIVE confirming that there are no errors in the OPEN message we sent.
-- An UPDATE (and therefore a single path) with four pieces of network layer reachability information (NLRI).
-- An UPDATE withdrawing the 10.50.11.0/24 route
-- A KEEPALIVE 
-- An UPDATE reannouncing the 10.50.11.0/24 route
+Here's an example of *bgpsee* peering with an external router:
 
 ```
-./bgpsee --peer-ip 10.50.0.8 --name Local_Peer --local-asn 65001 --peer-asn 65011
-recv_time=1688085528 name=Local_Peer id=0 type=OPEN, length=89 version=4, asn=65011, hold_time=180, router_id=33686018, param_len=60
-recv_time=1688085528 name=Local_Peer id=1 type=KEEPALIVE, length=19
-recv_time=1688085530 name=Local_Peer id=2 type=UPDATE, length=65 widthdrawn_route_length=0 withdrawn_routes="" path_attribute_length=26 origin=IGP n_as_segments=1, n_total_as=1 as_path="65011" nlri="10.50.9.0/24,10.52.0.0/16,10.50.254.254/32,10.50.11.0/24"
-recv_time=1688085532 name=Local_Peer id=3 type=UPDATE, length=27 widthdrawn_route_length=4 withdrawn_routes="10.50.11.0/24" path_attribute_length=0 nlri=""
-recv_time=1688085538 name=Local_Peer id=4 type=KEEPALIVE, length=19
-recv_time=1688085541 name=Local_Peer id=5 type=UPDATE, length=53 widthdrawn_route_length=0 withdrawn_routes="" path_attribute_length=26 origin=IGP n_as_segments=1, n_total_as=1 as_path="65011" nlri="10.50.11.0/24"
-
+# ./bgpsee fw1.i.foletta.xyz,65001,Internal_Rtr_1
+- Press Ctrl+D to exit
+- Opening connection to fw1.i.foletta.xyz,65001 (Internal_Rtr_1)
+- Connection to Internal_Rtr_1 successful
+recv_time=1694549778 name=Internal_Rtr_1 id=0 type=OPEN length=69 version=4, asn=65001, hold_time=180, router_id=16790026, param_len=40
+recv_time=1694549778 name=Internal_Rtr_1 id=1 type=KEEPALIVE length=19
+recv_time=1694549786 name=Internal_Rtr_1 id=2 type=KEEPALIVE length=19
+recv_time=1694549795 name=Internal_Rtr_1 id=3 type=KEEPALIVE length=19
+recv_time=1694549804 name=Internal_Rtr_1 id=4 type=KEEPALIVE length=19
+recv_time=1694549808 name=Internal_Rtr_1 id=5 type=UPDATE length=59 widthdrawn_route_length=0 withdrawn_routes="" path_attribute_length=18 origin=IGP n_as_segments=1 n_total_as=1 as_path="65001" next_hop=10.50.254.1 nlri="10.50.8.0/24,10.50.255.0/24,10.50.254.2/32,10.50.254.1/32"
+recv_time=1694549808 name=Internal_Rtr_1 id=6 type=UPDATE length=80 widthdrawn_route_length=0 withdrawn_routes="" path_attribute_length=20 origin=IGP n_as_segments=1 n_total_as=2 as_path="65001,65011" next_hop=10.50.254.1 nlri="10.50.9.0/24,10.51.255.6/31,10.51.255.4/31,10.51.255.2/31,10.51.255.0/31,10.51.253.0/24,10.51.252.0/24,10.50.254.254/32"
+recv_time=1694549812 name=Internal_Rtr_1 id=7 type=KEEPALIVE length=19
+- Shutting down peers..
+- Peer Internal_Rtr_1 has closed
 ```
 
-With access to a full internet table (thank you [Andrew Vinton](https://www.linkedin.com/in/andrew-vinton/)), we can use bgpsee with other command line utilities to find out interesting statistics. First off: what's the total number of paths at a point in time:
+We see a connection to an external router, with the peer router sending an OPEN and an immediate KEEPALIVE signalling it accepts the OPEN message we sent. After 30 seconds (the default [advertisement interval](https://datatracker.ietf.org/doc/html/rfc4271#section-9.2.1.1) and a few KEEPALIVES, the peer sends us two UPDATE messages, each representing a different path. 
 
-```
-./bgpsee --peer-ip <removed> --local-asn 65001 --peer-asn <removed> |\
-grep UPDATE |\
-wc -l
-
-139006
-```
-
-
-Or what is the longest ASN path on the internet:
-
-```
-./bgpsee --peer-ip <removed> --local-asn 65001 --peer-asn 45270 |\
-grep UPDATE |\
-cut -d' ' -f12,13 |\
-egrep -o "[[:digit:]]+ .*" |\
-sort -nr |\
-head -n1
-
-131 as_path="4764,9002,30844,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447,37447"
-```
-
-Looks like [Orange in the Democratic Republic of the Congo](https://www.peeringdb.com/asn/37447) has a prepend typo, or *really* wants this to be a less preferable path.
-  
 # Building
 
 To build simply download/clone and build using make:
