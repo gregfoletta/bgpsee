@@ -54,12 +54,12 @@ We see a connection to an external router, with the peer router sending an OPEN 
 
 To build simply download/clone and build using make:
 ```
-git clone https://github.com/gregfoletta/bgpsee.git
+git clone --recurse-submodules https://github.com/gregfoletta/bgpsee.git
 cd bgpsee
 make
 ```
 
-This builds a `bgpsee` executable in the root directory. There is no make install.
+This builds a *bgpsee* executable in the root directory. There is no make install.
 
 # Roadmap
 
