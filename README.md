@@ -17,12 +17,12 @@ Versions < 0.1.0 are considered beta version of bgpsee. There may be rough edges
 # Usage
 
 ```
-./bgpsee [options...] <peer> [<peer> ...]\n"
+./bgpsee [options...] <peer> [<peer> ...]"
     -s, --source <ip>           IP BGP connection is sourced from
     -a, --asn <asn>             Local ASN of bgpsee. If not provided 65000 will be used
     -r, --rid <ip>              Local router ID of bgpsee. If not provided 1.1.1.1 will be used
     -l, --logging <lvl>         Logging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug
-    -h, --help\                 Print a help message
+    -h, --help                  Print a help message
 
 <peer> formats: <ip>,<asn> or <ip>,<asn>,<name>
 ```
@@ -48,7 +48,7 @@ recv_time=1694549812 name=Internal_Rtr_1 id=7 type=KEEPALIVE length=19
 - Peer Internal_Rtr_1 has closed
 ```
 
-We see a connection to an external router, with the peer router sending an OPEN and an immediate KEEPALIVE signalling it accepts the OPEN message we sent. After 30 seconds (the default [advertisement interval](https://datatracker.ietf.org/doc/html/rfc4271#section-9.2.1.1) and a few KEEPALIVES, the peer sends us two UPDATE messages, each representing a different path. 
+We see a connection to an external router, with the peer router sending an OPEN and an immediate KEEPALIVE signalling it accepts the OPEN message we sent. After 30 seconds (the default [advertisement interval](https://datatracker.ietf.org/doc/html/rfc4271#section-9.2.1.1)) and a few KEEPALIVES, the peer sends us two UPDATE messages, each representing a different path. 
 
 # Building
 
