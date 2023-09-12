@@ -8,6 +8,7 @@
 #include "bgp_message.h"
 #include "byte_conv.h"
 #include "list.h"
+#include "log.h"
 
 #define BGP_HEADER_LEN 19 
 #define BGP_HEADER_MARKER_LEN 16 
@@ -97,7 +98,7 @@ struct bgp_msg *recv_msg(int socket_fd) {
 
     ret = recv(socket_fd, header, sizeof(header), MSG_WAITALL);
     if (ret <= 0) { //EOF or error - switch to IDLE, and (eventually) cleanup
-        DEBUG_PRINT("recv() header returned %lu, errno: %s\n", ret, strerror(errno));
+        log_print(LOG_DEBUG, "recv() header returned %lu, errno: %s\n", ret, strerror(errno));
         free(message);
         message = NULL;
         goto exit;
@@ -123,7 +124,7 @@ struct bgp_msg *recv_msg(int socket_fd) {
     if (message->body_length > 0) {
         ret = recv(socket_fd, message_body, message->body_length, MSG_WAITALL);
         if (ret <= 0) { //EOF or error
-            DEBUG_PRINT("recv() returned < 0, errno: %s\n", strerror(errno));
+            log_print(LOG_DEBUG, "recv() returned < 0, errno: %s\n", strerror(errno));
             free(message);
             free(message_body);
             return NULL;
@@ -147,13 +148,12 @@ struct bgp_msg *recv_msg(int socket_fd) {
             ret = parse_route_refresh(message);
             break;
         default:
-            DEBUG_PRINT("Invalid message type stored in message structure: %d\n", message->type);
+            log_print(LOG_DEBUG, "Invalid message type stored in message structure: %d\n", message->type);
             return NULL;
     }
 
     if (ret < 0) {
-        DEBUG_PRINT("Error parsing message");
-
+        return NULL;
     }
 
 exit:
@@ -272,7 +272,7 @@ int validate_header(unsigned char *header, struct bgp_msg *message) {
 
     //Check that the marker is correct
     if(memcmp(header, marker, BGP_HEADER_MARKER_LEN)) {
-        DEBUG_PRINT("Message has invalid marker\n");
+        log_print(LOG_DEBUG, "Message has invalid marker\n");
         return -1;
     }
 
@@ -286,7 +286,7 @@ int validate_header(unsigned char *header, struct bgp_msg *message) {
 
     type = *pos++;
     if (type == 0 || type > ROUTE_REFRESH) {
-        DEBUG_PRINT("Received invalid message type: %d\n", type);
+        log_print(LOG_DEBUG, "Received invalid message type: %d\n", type);
         return -1;
     }
 
@@ -326,7 +326,7 @@ int parse_open(struct bgp_msg *message, unsigned char *body) {
     message->open.router_id = uchar_be_to_uint32_inc(&body);
     message->open.opt_param_len = *body++;
 
-    DEBUG_PRINT("Received OPEN message: V: %d, ASN: %d;, HT: %d, RID: %d, OPT_LEN: %d\n",
+    log_print(LOG_DEBUG, "Received OPEN message: V: %d, ASN: %d;, HT: %d, RID: %d, OPT_LEN: %d\n",
         message->open.version,
         message->open.asn,
         message->open.hold_time,
@@ -537,7 +537,7 @@ int parse_update(struct bgp_msg *message, unsigned char *body) {
     unsigned char *pos = body;
     struct ipv4_nlri *nlri;
 
-    DEBUG_PRINT("Received UPDATE\n");
+    log_print(LOG_DEBUG, "Received UPDATE\n");
 
     message->update = calloc(1, sizeof(*message->update));
 
@@ -603,7 +603,7 @@ int parse_notification(struct bgp_msg *message, unsigned char *body) {
     message->notification.code = *body++;
     message->notification.subcode = *body;
 
-    DEBUG_PRINT("Received NOTIFICATION message: Code: %d, Subcode: %d\n",
+    log_print(LOG_DEBUG, "Received NOTIFICATION message: Code: %d, Subcode: %d\n",
         message->notification.code,
         message->notification.subcode
     );
@@ -614,7 +614,7 @@ int parse_notification(struct bgp_msg *message, unsigned char *body) {
 //This function is essentially a NOOP, as the header has already been parsed,
 //and a keepalive has no message body
 int parse_keepalive(struct bgp_msg *message) {
-    DEBUG_PRINT("Received KEEPALIVE message (%d, %d, %d)\n",
+    log_print(LOG_DEBUG, "Received KEEPALIVE message (%d, %d, %d)\n",
         message->type,
         message->length,
         message->body_length
