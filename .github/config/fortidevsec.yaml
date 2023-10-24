@@ -1,8 +1,9 @@
 # If below settings are not configured, scans will be performed for all supported scanners.
-# scanners:
-   - sast
+
+scanners:
+  - sast
 #   - sca
-   - secret
+  - secret
 #   - iac
 #   - container
 #   - dast
