@@ -7,7 +7,7 @@ OBJ := $(SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
 BIN := bgpsee
 
-CFLAGS += -g3 -Wall -Wshadow -fanalyzer -Wextra -fvisibility=hidden -Wvla -Wconversion -Wdouble-promotion -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion $(FSANITIZE)
+CFLAGS += -g3 -Wall -Wshadow -fanalyzer -Wextra -fvisibility=hidden -Wvla -Wconversion -Wdouble-promotion -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion $(FSANITIZE) -ljansso
 
 FSANITIZE = -fsanitize=address,undefined 
 LDFLAGS = -lm -pthread $(FSANITIZE)

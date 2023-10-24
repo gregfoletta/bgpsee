@@ -2,17 +2,21 @@ name: FortiDevSec Scanner CI
 on:
   push:
     branches:
-      - master
+      - fortidevsec 
   pull_request:
     branches:
       - master
 jobs:
-  build:
+  SAST:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
       - name: SAST
+        env:
+          DEVSEC_ORG: ${{ secrets.DEVSEC_ORG }}
+          DEVSEC_APP: ${{ secrets.DEVSEC_APP }}
         run: |
           env | grep -E "GITHUB_ACTIONS|GITHUB_RUN_NUMBER|GITHUB_REF_NAME|GITHUB_SHA" > /tmp/env
+          cat <(echo "id: { org: $DEVSEC_ORG, app: $DEVSEC_APP }") .github/config/fortidevsec.yaml > fdevsec.yaml
           docker pull registry.fortidevsec.forticloud.com/fdevsec_sast:latest
           docker run --rm --env-file /tmp/env --mount type=bind,source=$PWD,target=/scan registry.fortidevsec.forticloud.com/fdevsec_sast:latest
