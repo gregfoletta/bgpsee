@@ -76,6 +76,11 @@ void print_msg_stdout(struct bgp_msg *msg) {
     dispatch[msg->type - 1](msg);
 }
 
+void print_msg_json(struct bgp_msg *msg) {
+    printf("Printing JSON\n");
+
+}
+
 
 void initialise_output(struct bgp_peer *peer) {
     pthread_mutex_lock(&peer->stdout_lock);

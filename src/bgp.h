@@ -6,6 +6,13 @@
 //Static number of BGP peers for the moment;
 #define MAX_BGP_PEERS 256
 
+//Types of output
+enum bgp_output {
+    BGP_OUT_KV,
+    BGP_OUT_JSON,
+    N_BGP_FORMATS
+} ;
+
 struct bgp_peer;
 struct bgp_instance;
 struct bgp_local;
@@ -15,6 +22,8 @@ void free_bgp_instance(struct bgp_instance *);
 
 unsigned int create_bgp_peer(struct bgp_instance *, const char *, const uint16_t, const char *);
 unsigned int bgp_peer_source(struct bgp_instance *, unsigned int, const char *);
+
+unsigned int set_bgp_output(struct bgp_instance *, unsigned int, enum bgp_output);
 
 void free_bgp_peer(struct bgp_instance *, unsigned int);
 void free_all_bgp_peers(struct bgp_instance *);

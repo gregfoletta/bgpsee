@@ -168,7 +168,7 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
 
     peer->peer_asn = peer_asn;
 
-    //Init the stdout lock
+    //Init the stdout lock and the output function
     initialise_output(peer);
 
     //Init message queue
@@ -195,6 +195,29 @@ unsigned int bgp_peer_source(struct bgp_instance *i, unsigned int id, const char
     //Source IP is empty at this stage
     sdsfree(peer->source_ip);
     peer->source_ip = sdsnew(src_ip);
+
+    return 0;
+}
+
+
+
+unsigned int set_bgp_output(struct bgp_instance *i, unsigned int id,  enum bgp_output format) {
+    struct bgp_peer *peer;
+
+    if (!(peer = get_peer_from_instance(i, id))) {
+        return -1;
+    }
+
+    switch (format) {
+        case BGP_OUT_KV:
+            peer->print_msg = print_msg_stdout;
+            break;
+        case BGP_OUT_JSON:
+            peer->print_msg = print_msg_json;
+            break;
+        default:
+            return -2;
+    }
 
     return 0;
 }
