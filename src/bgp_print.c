@@ -257,15 +257,15 @@ void print_routerefresh(struct bgp_msg *msg) {
 /*
  * JSON Output
  */
-json_t *construct_json_open(json_t *, struct bgp_msg *);
-json_t *construct_json_update(json_t *, struct bgp_msg *);
-json_t *construct_json_notification(json_t *, struct bgp_msg *);
-json_t *construct_json_keepalive(json_t *, struct bgp_msg *);
-json_t *construct_json_routerefresh(json_t *, struct bgp_msg *);
+json_t *construct_json_open(struct bgp_msg *);
+json_t *construct_json_update(struct bgp_msg *);
+json_t *construct_json_notification(struct bgp_msg *);
+json_t *construct_json_keepalive(struct bgp_msg *);
+json_t *construct_json_routerefresh(struct bgp_msg *);
 
 
 int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
-    json_t * (*dispatch[5]) (json_t *, struct bgp_msg *) = {
+    json_t * (*dispatch[5]) (struct bgp_msg *) = {
         &construct_json_open,
         &construct_json_update,
         &construct_json_notification,
@@ -277,6 +277,7 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
 
     json_object_set_new( root, "recv_time", json_integer(msg->recv_time) );
     json_object_set_new( root, "peer_name", json_string(msg->peer_name) );
+    json_object_set_new( root, "id", json_integer(msg->id) );
     json_object_set_new( root, "type", json_string(type_string[ msg->type ]) );
     json_object_set_new( root, "length", json_integer(msg->length) );
 
@@ -285,9 +286,9 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
         return -1;
     }
 
-    json_object_set_new( root, "message", dispatch[msg->type - 1](root, msg) );
+    json_object_set_new( root, "message", dispatch[msg->type - 1](msg) );
 
-    char *json_string = json_dumps(root, JSON_INDENT(4));
+    char *json_string = json_dumps(root, JSON_COMPACT);
     printf("%s\n", json_string);
 
     free(json_string);
@@ -298,20 +299,63 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
 
 
 
-json_t *construct_json_open(json_t *leaf, struct bgp_msg *msg) {
-    return json_object();
+json_t *construct_json_open(struct bgp_msg *msg) {
+    json_t *leaf = json_object();
+
+    json_object_set_new( leaf, "version", json_integer(msg->open.version) );
+    json_object_set_new( leaf, "asn", json_integer(msg->open.asn) );
+    json_object_set_new( leaf, "hold_time", json_integer(msg->open.hold_time) );
+    json_object_set_new( leaf, "router_id", json_integer(msg->open.router_id) );
+    json_object_set_new( leaf, "optional_parameter_length", json_integer(msg->open.opt_param_len) );
+
+    return leaf;
 }
 
-json_t *construct_json_update(json_t *leaf, struct bgp_msg *msg) {
-    return json_object();
-}
-json_t *construct_json_notification(json_t *leaf, struct bgp_msg *msg) {
-    return json_object();
+json_t *construct_json_update(struct bgp_msg *msg) {
+    struct list_head *i;
+    struct ipv4_nlri *nlri;
+
+    json_t *leaf = json_object();
+
+    //Withdrawn Routes
+    json_object_set_new( leaf, "withdrawn_route_length", json_integer(msg->update->withdrawn_route_length) );
+
+    json_t* withdrawn_routes = json_array();
+    list_for_each(i, &msg->update->withdrawn_routes) {
+        nlri = list_entry(i, struct ipv4_nlri, list);
+        json_array_append_new( withdrawn_routes, json_string(nlri->string) );
+    }
+    json_object_set_new( leaf, "withdrawn_routes", withdrawn_routes);
+
+    //Path attributes
+    json_object_set_new( leaf, "path_attribute_length", json_integer(msg->update->path_attr_length) );
+
+    //TODO: PA dispath
+    
+    //NLRI
+    json_t *routes = json_array();
+    list_for_each(i, &msg->update->nlri) {
+        nlri = list_entry(i, struct ipv4_nlri, list);
+        json_array_append_new( routes, json_string(nlri->string) );
+    }
+    json_object_set_new( leaf, "nlri", routes );
+    
+    return leaf;
+
 }
 
-json_t *construct_json_keepalive(json_t *leaf, struct bgp_msg *msg) {
+json_t *construct_json_notification(struct bgp_msg *msg) {
+    json_t *leaf = json_object();
+
+    json_object_set_new( leaf, "code", json_integer(msg->notification.code) );
+    json_object_set_new( leaf, "subcode", json_integer(msg->notification.subcode) );
+
+    return leaf;
+}
+
+json_t *construct_json_keepalive(struct bgp_msg *msg) {
     return json_object();
 }
-json_t *construct_json_routerefresh(json_t *leaf, struct bgp_msg *msg) {
+json_t *construct_json_routerefresh(struct bgp_msg *msg) {
     return json_object();
 }
