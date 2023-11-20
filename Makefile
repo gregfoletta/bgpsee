@@ -10,7 +10,7 @@ BIN := bgpsee
 CFLAGS += -g3 -Wall -Wshadow -fanalyzer -Wextra -fvisibility=hidden -Wvla -Wconversion -Wdouble-promotion -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion $(FSANITIZE)
 
 FSANITIZE = -fsanitize=address,undefined 
-LDFLAGS = -lm -pthread $(FSANITIZE)
+LDFLAGS = -lm -ljansson -pthread $(FSANITIZE)
 
 all: $(BIN)
 

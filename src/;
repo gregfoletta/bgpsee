@@ -285,7 +285,7 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
         return -1;
     }
 
-    json_object_set_new( root, "message", dispatch[msg->type - 1](root, msg) );
+    dispatch[msg->type - 1](root, msg);
 
     char *json_string = json_dumps(root, JSON_INDENT(4));
     printf("%s\n", json_string);

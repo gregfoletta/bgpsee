@@ -1,8 +1,12 @@
-#include "bgp_peer.h"
+//Types of output
+enum bgp_output {
+    BGP_OUT_KV,
+    BGP_OUT_JSON,
+    N_BGP_FORMATS
+} ;
 
+struct bgp_peer;
 
-void initialise_output(struct bgp_peer *peer);
-void print_bgp_msg_and_gc(struct bgp_peer *);
+void initialise_output(struct bgp_peer *) ;
+int _set_bgp_output(struct bgp_peer *, enum bgp_output);
 
-void print_msg_stdout(struct bgp_msg *);
-void print_msg_json(struct bgp_msg *);
