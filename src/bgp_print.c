@@ -288,7 +288,7 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
 
     json_object_set_new( root, "message", dispatch[msg->type - 1](msg) );
 
-    char *json_string = json_dumps(root, JSON_COMPACT);
+    char *json_string = json_dumps(root, JSON_INDENT(2));
     printf("%s\n", json_string);
 
     free(json_string);
@@ -311,9 +311,42 @@ json_t *construct_json_open(struct bgp_msg *msg) {
     return leaf;
 }
 
+
+json_t *construct_json_pa_origin(struct bgp_path_attribute *);
+json_t *construct_json_pa_as_path(struct bgp_path_attribute *);
+json_t *construct_json_next_hop(struct bgp_path_attribute *);
+json_t *construct_json_med(struct bgp_path_attribute *);
+json_t *construct_json_local_pref(struct bgp_path_attribute *);
+json_t *construct_json_atomic_aggregate(struct bgp_path_attribute *);
+json_t *construct_json_aggregator(struct bgp_path_attribute *);
+
 json_t *construct_json_update(struct bgp_msg *msg) {
     struct list_head *i;
     struct ipv4_nlri *nlri;
+
+    char *pa_id_to_name[] = {
+        "<Invalid>",
+        "ORIGIN",
+        "AS_PATH",
+        "NEXT_HOP",
+        "MULTI_EXIT_DISC",
+        "LOCAL_PREF",
+        "ATOMIC_AGGREGATE",
+        "AGGREGATOR"
+    };
+
+
+    //+1 to account for 0 at the start
+    json_t *(*path_attr_dispatch[AGGREGATOR + 1]) (struct bgp_path_attribute *) = {
+        NULL,
+        &construct_json_pa_origin,
+        &construct_json_pa_as_path,
+        &construct_json_next_hop,
+        &construct_json_med,
+        &construct_json_local_pref,
+        &construct_json_atomic_aggregate,
+        &construct_json_aggregator
+    };
 
     json_t *leaf = json_object();
 
@@ -329,8 +362,17 @@ json_t *construct_json_update(struct bgp_msg *msg) {
 
     //Path attributes
     json_object_set_new( leaf, "path_attribute_length", json_integer(msg->update->path_attr_length) );
-
-    //TODO: PA dispath
+    for (int x = 0; x <= AGGREGATOR; x++) {
+        if (!msg->update->path_attrs[x] || !path_attr_dispatch[x]) {
+            continue;
+        }
+        //Add the new path attribute object
+        json_object_set_new(
+            leaf,
+            pa_id_to_name[x],
+            path_attr_dispatch[x](msg->update->path_attrs[x])
+        );
+    }
     
     //NLRI
     json_t *routes = json_array();
@@ -343,6 +385,89 @@ json_t *construct_json_update(struct bgp_msg *msg) {
     return leaf;
 
 }
+
+json_t *construct_json_pa_origin(struct bgp_path_attribute *attr) {
+    char *origin_string[] = {
+        "IGP",
+        "EGP",
+        "INCOMPLETE"
+    };
+
+    if (attr->origin > 2) {
+        return json_object();
+    }
+
+    return json_string(origin_string[ attr->origin ]);
+}
+
+json_t *construct_json_pa_as_path(struct bgp_path_attribute *attr) {
+    struct path_segment *seg;
+    struct list_head *i;
+    json_t *as_path = json_object();
+
+    char *as_type_id_to_name[] = {
+        "<Invalid>",
+        "AS_SET",
+        "AS_SEQUENCE"
+    };
+
+    if (!attr->as_path) {
+        return json_object();
+    }
+
+    json_object_set_new( as_path, "n_as_segments", json_integer(attr->as_path->n_segments) );
+    json_object_set_new( as_path, "n_total_as", json_integer(attr->as_path->n_total_as) );
+
+    json_t *path_segments = json_array();
+    list_for_each(i, &attr->as_path->segments) {
+        json_t *path_segment = json_object();
+        seg = list_entry(i, struct path_segment, list);
+
+        //Invalid segment type
+        if (seg->type == 0 || seg->type > 2) {
+            json_object_set_new( path_segment, "type", json_string("Invalid") );
+        }
+        json_object_set_new( path_segment, "type", json_string(as_type_id_to_name[ seg->type]) );
+        json_object_set_new( path_segment, "n_as", json_integer(seg->n_as) );
+
+        json_t *asns = json_array();
+        for (int x = 0; x < seg->n_as; x++) {
+            json_array_append_new( asns, json_integer(seg->as[x]) );
+        }
+        json_object_set_new( path_segment, "asns", asns );
+        json_array_append_new( path_segments, path_segment );
+    }
+
+    json_object_set_new( as_path, "path_segments", path_segments );
+
+    return as_path;
+}
+
+json_t *construct_json_next_hop(struct bgp_path_attribute *attr) {
+    return json_integer(attr->next_hop);
+}
+
+json_t *construct_json_med(struct bgp_path_attribute *attr) {
+    return json_integer(attr->multi_exit_disc);
+}
+
+json_t *construct_json_local_pref(struct bgp_path_attribute *attr) {
+    return json_integer(attr->local_pref);
+}
+
+json_t *construct_json_atomic_aggregate(struct bgp_path_attribute *attr) {
+    return json_boolean(1);
+}
+
+json_t *construct_json_aggregator(struct bgp_path_attribute *attr) {
+    json_t *aggregator = json_object();
+
+    json_object_set_new( aggregator, "aggregator_asn", json_integer(attr->aggregator->asn) );
+    json_object_set_new( aggregator, "aggregator_ip", json_integer(attr->aggregator->ip) );
+
+    return aggregator;
+}
+
 
 json_t *construct_json_notification(struct bgp_msg *msg) {
     json_t *leaf = json_object();
