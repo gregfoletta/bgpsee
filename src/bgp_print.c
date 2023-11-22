@@ -134,21 +134,48 @@ void print_pa_as_path(struct bgp_path_attribute *pa) {
     printf("\" ");
 }
 
-//This is gross and yuck
-void print_ipv4(uint32_t ipv4) {
+
+char *ipv4_string(uint32_t ipv4) {
     uint8_t octets[4];
+    char *ipv4_string;
+
+    //IPv4 max string size is (4 * 3){octets} + (3 * 1){dots} + (1){NULL} = 16
+    #define MAX_IPV4_STRING 16
+    ipv4_string = calloc(MAX_IPV4_STRING, sizeof(*ipv4_string));
+
+    if (!ipv4_string) {
+        return NULL;
+    }
 
     octets[0] = (uint8_t) ((ipv4 & 0xff000000) >> 24);
     octets[1] = (uint8_t) ((ipv4 & 0x00ff0000) >> 16);
     octets[2] = (uint8_t) ((ipv4 & 0x0000ff00) >> 8);
     octets[3] = (uint8_t) (ipv4 & 0x000000ff);
 
-    printf("%d.%d.%d.%d",
-        octets[3],
-        octets[2],
+    snprintf(
+        ipv4_string,
+        MAX_IPV4_STRING,
+        "%d.%d.%d.%d",
+        octets[0],
         octets[1],
-        octets[0]
+        octets[2],
+        octets[3]
     );
+
+    return ipv4_string;
+}
+
+
+
+//This is gross and yuck
+void print_ipv4(uint32_t ipv4) {
+    char *ipv4_str = ipv4_string(ipv4);
+
+    if (!ipv4_str) {
+        return;
+    }
+
+    printf("%s", ipv4_str);
 }
 
 void print_next_hop(struct bgp_path_attribute *pa) {
@@ -301,11 +328,16 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
 
 json_t *construct_json_open(struct bgp_msg *msg) {
     json_t *leaf = json_object();
+    char *router_id;
 
     json_object_set_new( leaf, "version", json_integer(msg->open.version) );
     json_object_set_new( leaf, "asn", json_integer(msg->open.asn) );
     json_object_set_new( leaf, "hold_time", json_integer(msg->open.hold_time) );
-    json_object_set_new( leaf, "router_id", json_integer(msg->open.router_id) );
+
+    router_id = ipv4_string(msg->open.router_id);
+    json_object_set_new( leaf, "router_id", json_string(router_id) );
+    free(router_id);
+
     json_object_set_new( leaf, "optional_parameter_length", json_integer(msg->open.opt_param_len) );
 
     return leaf;
@@ -362,17 +394,20 @@ json_t *construct_json_update(struct bgp_msg *msg) {
 
     //Path attributes
     json_object_set_new( leaf, "path_attribute_length", json_integer(msg->update->path_attr_length) );
+    json_t *path_attributes = json_object();
     for (int x = 0; x <= AGGREGATOR; x++) {
         if (!msg->update->path_attrs[x] || !path_attr_dispatch[x]) {
             continue;
         }
         //Add the new path attribute object
         json_object_set_new(
-            leaf,
+            path_attributes,
             pa_id_to_name[x],
             path_attr_dispatch[x](msg->update->path_attrs[x])
         );
     }
+
+    json_object_set_new( leaf, "path_attributes", path_attributes );
     
     //NLRI
     json_t *routes = json_array();
@@ -444,7 +479,11 @@ json_t *construct_json_pa_as_path(struct bgp_path_attribute *attr) {
 }
 
 json_t *construct_json_next_hop(struct bgp_path_attribute *attr) {
-    return json_integer(attr->next_hop);
+    char *nh_str = ipv4_string(attr->next_hop);
+    json_t *nh = json_string(nh_str);
+    free(nh_str);
+
+    return nh;
 }
 
 json_t *construct_json_med(struct bgp_path_attribute *attr) {
@@ -461,9 +500,12 @@ json_t *construct_json_atomic_aggregate(struct bgp_path_attribute *attr) {
 
 json_t *construct_json_aggregator(struct bgp_path_attribute *attr) {
     json_t *aggregator = json_object();
+    char *agg_ip_str = ipv4_string(attr->aggregator->ip);
 
     json_object_set_new( aggregator, "aggregator_asn", json_integer(attr->aggregator->asn) );
-    json_object_set_new( aggregator, "aggregator_ip", json_integer(attr->aggregator->ip) );
+    json_object_set_new( aggregator, "aggregator_ip", json_string(agg_ip_str) );
+
+    free(agg_ip_str);
 
     return aggregator;
 }
