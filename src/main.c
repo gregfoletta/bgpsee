@@ -26,6 +26,7 @@ struct cmdline_opts {
     uint16_t local_asn;
     uint32_t local_rid;
     enum bgp_output format;
+    int _error;
 };
 
 struct cmdline_opts parse_cmdline(int, char **);
@@ -40,6 +41,11 @@ int main(int argc, char **argv) {
     memset(bgp_peer_ids, 0, sizeof(bgp_peer_ids));
 
     options = parse_cmdline(argc, argv);
+
+    if (options._error) {
+        log_print(LOG_ERROR, "Command line options error, exiting");
+        exit(1);
+    }
 
     set_log_level(options.log_level);
 
@@ -115,6 +121,7 @@ int main(int argc, char **argv) {
     while (read(0, read_buffer, 32) > 0) { };
     log_print(LOG_INFO, "Shutting down peers..\n");
 
+
     deactivate_all_bgp_peers(bgp_i);
     free_all_bgp_peers(bgp_i);
     free_bgp_instance(bgp_i);
@@ -140,9 +147,17 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
         .peer_asn = 0,
         .local_asn = 65000,
         .local_rid = 0x01010101,
-        .format = BGP_OUT_KV,
-        .name = calloc(MAX_PEER_NAME_LEN, sizeof(char)) 
+        .format = BGP_OUT_JSON,
+        .name = calloc(MAX_PEER_NAME_LEN, sizeof(char)),
+        ._error = 0
     };
+
+    if (!option_return.name) {
+        option_return._error = 1;
+        return option_return;
+
+    }
+
 
     strncpy(option_return.name, "BGP Peer", MAX_PEER_NAME_LEN);
 
@@ -203,7 +218,7 @@ void print_help(void) {
         "-a, --asn <asn>\t\tLocal ASN of bgpsee. If not provided 65000 will be used.\n"
         "-r, --rid <ip>\t\tLocal router ID of bgpsee. If not provided 1.1.1.1 will be used.\n"
         "-l, --logging <level>\tLogging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug \n"
-        "-f, --format <fmt>\tFormat of the output, <fmt> may be \"kv\" for or \"json\"\n"
+        "-f, --format <fmt>\tFormat of the output, <fmt> may be 'json' or 'kv'. Defaults to 'json'\n"
         "-h, --help\t\tPrint this help message\n"
         "\n"
         "<peer> formats: <ip>,<asn> or <ip>,<asn>,<name>\n\n";
