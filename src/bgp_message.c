@@ -358,6 +358,11 @@ ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time, uin
     return send(fd, message_buffer, BGP_OPEN_HEADER_LENGTH, 0);
 }
 
+
+//GCC thinks seg is leaked, but it's added to the as path segment and
+//freed in free_as_path()
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
 struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length) {
     struct as_path *path;
     struct path_segment *seg;
@@ -414,6 +419,7 @@ struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length)
         path->n_segments++;
         path->n_total_as =+ seg->n_as;
 
+        seg = NULL;
     }
 
     return path;
@@ -424,6 +430,7 @@ struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length)
     return NULL;
 
 }
+#pragma GCC diagnostic pop
 
 struct aggregator *parse_update_aggregator(unsigned char **body) {
     struct aggregator *agg;
@@ -557,6 +564,10 @@ int parse_update(struct bgp_msg *message, unsigned char *body) {
 
         while (pos < withdrawn_end) {
             nlri = parse_ipv4_nlri(&pos);
+            if (!nlri) {
+                break;
+            }
+
             list_add_tail(&nlri->list, &message->update->withdrawn_routes);
         }
     }
