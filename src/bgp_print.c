@@ -135,6 +135,10 @@ void print_pa_as_path(struct bgp_path_attribute *pa) {
 }
 
 
+/*
+ * The assumption here is that we're using this after we've pulled
+ * the IPv4 address off the network, thus it's in host byte order,
+ */
 char *ipv4_string(uint32_t ipv4) {
     uint8_t octets[4];
     char *ipv4_string;
@@ -156,10 +160,10 @@ char *ipv4_string(uint32_t ipv4) {
         ipv4_string,
         MAX_IPV4_STRING,
         "%d.%d.%d.%d",
-        octets[0],
-        octets[1],
+        octets[3],
         octets[2],
-        octets[3]
+        octets[1],
+        octets[0]
     );
 
     return ipv4_string;
