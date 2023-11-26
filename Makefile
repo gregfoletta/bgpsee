@@ -7,10 +7,12 @@ OBJ := $(SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
 BIN := bgpsee
 
-CFLAGS += -g3 -Wall -Wshadow -fanalyzer -Wextra -fvisibility=hidden -Wvla -Wconversion -Wdouble-promotion -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion $(FSANITIZE)
-
 FSANITIZE = -fsanitize=address,undefined 
-LDFLAGS = -lm -pthread $(FSANITIZE)
+DEBUG_FLAGS := -g3 -fanalyzer $(FSANITISZE)
+#DEBUG_FLAGS := -g0 
+
+CFLAGS += -Wall -Wshadow  -Wextra -fvisibility=hidden -Wvla -Wconversion -Wdouble-promotion -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion $(DEBUG_FLAGS)
+LDFLAGS = -ljansson -pthread -static-libasan $(FSANITIZE)
 
 all: $(BIN)
 

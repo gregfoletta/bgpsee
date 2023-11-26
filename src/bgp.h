@@ -3,8 +3,11 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 
+#include "bgp_print.h"
+
 //Static number of BGP peers for the moment;
 #define MAX_BGP_PEERS 256
+
 
 struct bgp_peer;
 struct bgp_instance;
@@ -15,6 +18,8 @@ void free_bgp_instance(struct bgp_instance *);
 
 unsigned int create_bgp_peer(struct bgp_instance *, const char *, const uint16_t, const char *);
 unsigned int bgp_peer_source(struct bgp_instance *, unsigned int, const char *);
+
+int set_bgp_output(struct bgp_instance *, unsigned int, enum bgp_output);
 
 void free_bgp_peer(struct bgp_instance *, unsigned int);
 void free_all_bgp_peers(struct bgp_instance *);

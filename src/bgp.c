@@ -14,7 +14,6 @@
 #include "bgp.h"
 #include "bgp_peer.h"
 #include "bgp_message.h"
-#include "bgp_print.h"
 #include "bgp_timers.h"
 
 #include "debug.h"
@@ -168,7 +167,7 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
 
     peer->peer_asn = peer_asn;
 
-    //Init the stdout lock
+    //Init the stdout lock and the output function
     initialise_output(peer);
 
     //Init message queue
@@ -197,6 +196,18 @@ unsigned int bgp_peer_source(struct bgp_instance *i, unsigned int id, const char
     peer->source_ip = sdsnew(src_ip);
 
     return 0;
+}
+
+
+
+int set_bgp_output(struct bgp_instance *i, unsigned int id,  enum bgp_output format) {
+    struct bgp_peer *peer;
+
+    if (!(peer = get_peer_from_instance(i, id))) {
+        return -1;
+    }
+
+    return    _set_bgp_output(peer, format);
 }
 
 
@@ -337,6 +348,32 @@ void msg_queue_gc(struct list_head *queue) {
         list_del(i);
         free_msg(msg);
     }
+}
+
+
+void print_bgp_msg_and_gc(struct bgp_peer *peer) {
+    struct bgp_msg *msg = NULL;
+    struct list_head *i, *tmp;
+
+    if (list_empty(&peer->output_q)) {
+        return;
+    }
+
+    //Lock stdout
+    pthread_mutex_lock(&peer->stdout_lock);
+
+    list_for_each_safe(i, tmp, &peer->output_q) {
+        msg = list_entry(i, struct bgp_msg, output);
+        //Don't print of the message hasn't been actioned yet
+        if (!msg->actioned) {
+            return;
+        }
+        peer->print_msg(peer, msg);
+        list_del(i);
+        free_msg(msg);
+    }
+
+    pthread_mutex_unlock(&peer->stdout_lock);
 }
 
 
