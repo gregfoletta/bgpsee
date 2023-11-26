@@ -2,6 +2,9 @@
 
 #include <sys/timerfd.h>
 #include <time.h>
+#include <netinet/in.h>
+
+
 #include "bgp_timers.h"
 #include "list.h"
 #include "tcp_client.h"
@@ -74,7 +77,7 @@ struct bgp_peer {
 
     //Printing
     pthread_mutex_t stdout_lock;
-    void (*print_msg)(struct bgp_msg *);
+    int (*print_msg)(struct bgp_peer *, struct bgp_msg *);
 
     //Ingress message queue
     struct list_head ingress_q;
