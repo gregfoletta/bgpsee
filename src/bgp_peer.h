@@ -60,6 +60,9 @@ struct bgp_peer {
     uint32_t *local_rid;
     uint32_t peer_rid;
 
+    uint64_t local_caps;
+    uint64_t peer_caps;
+
     sds peer_ip;
     sds source_ip;
 

@@ -42,11 +42,6 @@ char *pa_type_code[] = {
     "AGGREGATOR"
 };
 
-struct bgp_msg_open_param {
-    uint8_t type;
-    uint8_t length;
-    uint8_t *value;
-};
 
 
 //Non-public functions
@@ -167,14 +162,15 @@ exit:
 }
 
 int free_update(struct bgp_update *);
-int free_path_attributes(struct bgp_update *);
-int free_as_path(struct bgp_path_attribute *);
-int free_aggregator(struct bgp_path_attribute *);
+int free_open(struct bgp_open *);
 
 int free_msg(struct bgp_msg *message) {
     switch (message->type) {
         case UPDATE:
             free_update(message->update);
+            break;
+        case OPEN:
+            free_open(&message->open);
             break;
     }
 
@@ -182,6 +178,10 @@ int free_msg(struct bgp_msg *message) {
     return 0;
 }
 
+
+int free_path_attributes(struct bgp_update *);
+int free_as_path(struct bgp_path_attribute *);
+int free_aggregator(struct bgp_path_attribute *);
 
 int free_update(struct bgp_update *update) {
     struct list_head *i, *tmp;
@@ -319,12 +319,150 @@ void create_header(uint16_t length, uint8_t type, unsigned char *message_buffer)
     uint8_to_uchar(pos, type);
 }
 
+
+int parse_bgp_cap_mp_ext(struct bgp_capability *capability, unsigned char *bytes, uint8_t length) {
+    unsigned char *pos = bytes;
+    struct bgp_cap_mp_ext *mp_ext;
+
+    //Fixed length
+    if (length != 4) {
+        log_print(LOG_WARN, "Multiprotocol extension capability length incorrect (is %d, should be 4)\n");
+        return -1;
+    }
+
+    mp_ext = calloc(1, sizeof(*mp_ext));
+
+    if (!mp_ext) {
+        return -1;
+    }
+
+    mp_ext->afi = uchar_be_to_uint16_inc(&pos);
+    mp_ext->reserved = *pos++;
+    mp_ext->safi = *pos++;
+
+    capability->mp_ext = mp_ext;
+
+    return 0;
+}
+
+
+int parse_bgp_cap_route_refresh(struct bgp_capability *capability, unsigned char *bytes, uint8_t length) {
+    //Route refresh has no value
+    if (length != 0) {
+        log_print(LOG_WARN, "Received route-refresh capability with length != 0\n");
+        return -1;
+    }
+
+    capability->value = NULL;
+
+    return 0;
+}
+
+int parse_bgp_cap_unknown(struct bgp_capability *capability, unsigned char *bytes, uint8_t len) {
+    capability->value = NULL;
+
+    return 0;
+}
+
+struct bgp_capability *parse_optional_capabilities(unsigned char *params, uint8_t length) {
+    unsigned char *pos = params;
+    struct bgp_capability *cap;      
+
+    //Capability dispatch table - doing this initialisation within the parse seems sub-optimal,
+    //but we should only be getting one OPEN per BGP session.
+    int (*capability_dispatch[256]) (struct bgp_capability *, unsigned char *, uint8_t len);
+
+    //Code 0 is reserved
+    capability_dispatch[0] = NULL;
+    for (int x = 1; x < 256; x++) {
+        capability_dispatch[x] = &parse_bgp_cap_unknown;
+    }
+    capability_dispatch[1] = &parse_bgp_cap_mp_ext;
+    capability_dispatch[2] = &parse_bgp_cap_route_refresh;
+
+    while (pos < (params + length)) {
+        cap = calloc(1, sizeof(*cap));
+
+        if (!cap) {
+            return NULL;
+        }
+
+        cap->code = *pos++;
+        cap->length = *pos++;
+        
+        // cap->code is a uint8_t, and we've allocated 256 in the dispatch table,
+        // so every value will point to a valid function
+        if ( !capability_dispatch[ cap->code ](cap, pos, cap->length) ) {
+            log_print(LOG_WARN, "Capability parsing returned with error\n");
+        }
+
+        pos += cap->length;
+    }
+
+    return cap;
+}
+
+int parse_open_parameters(struct bgp_msg *message, unsigned char **body) {
+    unsigned char *pos = *body;
+    struct bgp_parameter *param;
+
+    if (message->open.opt_param_len < 2) {
+        return 0;
+    }
+
+    //TODO: probably need to rename cap to param, as the capabilit
+    //is a property of the param
+    
+    //TODO check for param_len overrrun
+    while (pos < (*body + message->open.opt_param_len)) {
+        param = calloc(1, sizeof(*param));
+        struct bgp_capability *cap;
+
+        if (!param) {
+            return -1;
+        }
+
+        param->type = *pos++;
+        param->length = *pos++;
+
+        //We only handle capabilities, no other optional parameters
+        if (param->type != 2) {
+            log_print(LOG_WARN, "Received OPEN optional parameter with type %d, skipping\n", param->type);
+            //TODO: another overrun check
+            *body += param->length;
+            continue;
+        }
+
+        log_print(LOG_DEBUG, "Received OPEN optional parameter type: %d, length: %d\n", param->type, param->length);
+
+        if (param->length == 0) {
+            param ->value = 0;
+            continue;
+        }
+
+        cap = parse_optional_capabilities(pos, param->length); 
+        if (!cap) {
+            return -1;
+        }
+
+        param->capability = cap;
+
+        list_add_tail(&param->list, &message->open.parameters);
+
+        pos += param->length;
+    }
+
+    return 0;
+}
+
 int parse_open(struct bgp_msg *message, unsigned char *body) {
     message->open.version = *body++;
     message->open.asn = uchar_be_to_uint16_inc(&body);
     message->open.hold_time = uchar_be_to_uint16_inc(&body);
     message->open.router_id = uchar_be_to_uint32_inc(&body);
     message->open.opt_param_len = *body++;
+
+    INIT_LIST_HEAD(&message->open.parameters);
 
     log_print(LOG_DEBUG, "Received OPEN message: V: %d, ASN: %d;, HT: %d, RID: %d, OPT_LEN: %d\n",
         message->open.version,
@@ -333,11 +471,39 @@ int parse_open(struct bgp_msg *message, unsigned char *body) {
         message->open.router_id,
         message->open.opt_param_len
     );
-        
-    //TODO: OPEN message checks
+
+    if (parse_open_parameters(message, &body) < 0) {
+            return -1;
+    }
 
     return 0;
 }
+
+int free_open(struct bgp_open *open) {
+    struct list_head *i, *tmp;
+    struct bgp_parameter *param;
+
+    //Free each optional parameter
+    list_for_each_safe(i, tmp, &open->parameters) {
+        param = list_entry(i, struct bgp_parameter, list);
+        list_del(i);
+
+        if (param->capability) {
+            free(param->capability);
+
+            //TODO: question, value is part of a union, and a different union memeber may have been
+            //allocated. Can we just free value?
+            if (param->capability->value) {
+                free(param->capability->value);
+            }
+        }
+
+        free(param);
+    }
+
+    return 0;
+}
+
 
 
 ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time, uint32_t router_id) {

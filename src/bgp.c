@@ -207,9 +207,21 @@ int set_bgp_output(struct bgp_instance *i, unsigned int id,  enum bgp_output for
         return -1;
     }
 
-    return    _set_bgp_output(peer, format);
+    return _set_bgp_output(peer, format);
 }
 
+
+int set_bgp_capabilities(struct bgp_instance *i, unsigned int id, uint64_t capability_field) {
+    struct bgp_peer *peer;
+
+    if (!(peer = get_peer_from_instance(i, id))) {
+        return -1;
+    }
+
+    peer->local_caps = capability_field;
+
+    return 0;
+}
 
 
 void free_bgp_peer(struct bgp_instance *i, unsigned int id) {

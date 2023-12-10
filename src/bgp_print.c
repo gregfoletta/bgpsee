@@ -8,6 +8,7 @@
 #include "bgp_peer.h"
 #include "bgp_message.h"
 #include "bgp_print.h"
+#include "bgp_strings.h"
 #include "list.h"
 
 
@@ -328,10 +329,43 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
     return 0;
 }
 
+json_t *construct_cap_unknown_or_empty(struct bgp_capability *cap) {
+    json_t *leaf = json_object();
 
+    return leaf;
+} 
+
+json_t *construct_cap_mp_ext(struct bgp_capability *cap) {
+    json_t *mp_ext_j = json_object();
+
+    json_object_set_new( mp_ext_j, "afi", json_string( afi_string(cap->mp_ext->afi) ) );
+    json_object_set_new( mp_ext_j, "safi", json_string( safi_string(cap->mp_ext->safi) ) );
+
+    return mp_ext_j;
+}
+
+json_t *construct_capability(struct bgp_capability *cap) {
+    json_t *leaf = json_object();
+
+    json_t * (*capability_dispatch[256]) (struct bgp_capability *);
+    for (int x = 0; x < 254; x++) {
+        capability_dispatch[x] = &construct_cap_unknown_or_empty;
+    }
+
+    capability_dispatch[1] = &construct_cap_mp_ext;
+
+
+    json_object_set_new( leaf, "code", json_string( capability_string(cap->code) ) );
+    json_object_set_new( leaf, "length", json_integer(cap->length) );
+    json_object_set_new( leaf, "value", capability_dispatch[ cap->code ](cap) );
+
+    return leaf;
+}
 
 json_t *construct_json_open(struct bgp_msg *msg) {
     json_t *leaf = json_object();
+    struct list_head *i;
+    struct bgp_parameter *param;
     char *router_id;
 
     json_object_set_new( leaf, "version", json_integer(msg->open.version) );
@@ -343,6 +377,22 @@ json_t *construct_json_open(struct bgp_msg *msg) {
     free(router_id);
 
     json_object_set_new( leaf, "optional_parameter_length", json_integer(msg->open.opt_param_len) );
+
+
+    json_t *parameters_j = json_array();
+    list_for_each(i, &msg->open.parameters) {
+        json_t *parameter_j = json_object();
+
+        param = list_entry(i, struct bgp_parameter, list);
+        json_object_set_new( parameter_j, "type", json_string( parameter_string(param->type) ) );
+        json_object_set_new( parameter_j, "length", json_integer(param->length) );
+
+        json_object_set_new( parameter_j, "value", construct_capability( param->capability ) );
+
+        json_array_append_new( parameters_j, parameter_j);
+    }
+
+    json_object_set_new( leaf, "parameters", parameters_j );
 
     return leaf;
 }

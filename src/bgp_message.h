@@ -17,6 +17,37 @@ enum bgp_msg_type {
     NUMBER_OF_MSG_TYPES //This will evaluate to the number msg types. Used during validation.
 };
 
+struct bgp_cap_mp_ext {
+    uint16_t afi;
+    uint8_t reserved;
+    uint8_t safi;
+};
+
+struct bgp_cap_four_oct_asn {
+    uint32_t asn;
+};
+
+struct bgp_capability {
+    uint8_t code;
+    uint8_t length;
+    union {
+        //Value is NULL for any capability with 0 length
+        uint8_t *value;
+        struct bgp_cap_mp_ext *mp_ext;
+    };
+};
+
+
+struct bgp_parameter {
+    uint8_t type;
+    uint8_t length;
+    union {
+        uint8_t value;
+        struct bgp_capability *capability;
+    };
+    struct list_head list;
+};
+
 //OPEN message
 struct bgp_open {
     uint8_t version;
@@ -24,7 +55,7 @@ struct bgp_open {
     uint16_t hold_time;
     uint32_t router_id;
     uint8_t opt_param_len;
-    struct bgp_msg_open_param *opt_params;
+    struct list_head parameters;
 };
 
 /*
