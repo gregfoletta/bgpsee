@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <jansson.h>
 
@@ -410,29 +411,19 @@ json_t *construct_json_update(struct bgp_msg *msg) {
     struct list_head *i;
     struct ipv4_nlri *nlri;
 
-    char *pa_id_to_name[] = {
-        "<Invalid>",
-        "ORIGIN",
-        "AS_PATH",
-        "NEXT_HOP",
-        "MULTI_EXIT_DISC",
-        "LOCAL_PREF",
-        "ATOMIC_AGGREGATE",
-        "AGGREGATOR"
-    };
-
-
-    //+1 to account for 0 at the start
-    json_t *(*path_attr_dispatch[AGGREGATOR + 1]) (struct bgp_path_attribute *) = {
-        NULL,
-        &construct_json_pa_origin,
-        &construct_json_pa_as_path,
-        &construct_json_next_hop,
-        &construct_json_med,
-        &construct_json_local_pref,
-        &construct_json_atomic_aggregate,
-        &construct_json_aggregator
-    };
+    //TODO: Another instance where we should probably be initialising this
+    //dispatch table at the start, rather than every time we parse a 
+    //message
+    json_t *(*path_attr_dispatch[256]) (struct bgp_path_attribute *);
+    memset(path_attr_dispatch, 0, sizeof(*path_attr_dispatch) * 256);
+    
+    path_attr_dispatch[1] = &construct_json_pa_origin;
+    path_attr_dispatch[2] = &construct_json_pa_as_path;
+    path_attr_dispatch[3] = &construct_json_next_hop;
+    path_attr_dispatch[4] = &construct_json_med;
+    path_attr_dispatch[5] = &construct_json_local_pref;
+    path_attr_dispatch[6] = &construct_json_atomic_aggregate;
+    path_attr_dispatch[7] = &construct_json_aggregator;
 
     json_t *leaf = json_object();
 
@@ -450,28 +441,38 @@ json_t *construct_json_update(struct bgp_msg *msg) {
     json_object_set_new( leaf, "path_attribute_length", json_integer(msg->update->path_attr_length) );
 
     json_t *path_attributes = json_array();
-    for (int x = 0; x <= AGGREGATOR; x++) {
-        if (!msg->update->path_attrs[x] || !path_attr_dispatch[x]) {
+
+    //Loop around all 256 path attributes
+    for (int x = 0; x < 256; x++) {
+        //No attribute in the array
+        if (!msg->update->path_attrs[x]) {
             continue;
         }
         json_t *path_attribute = json_object();
         json_t *path_attribute_specific;
         json_t *flags = json_array();
 
-        json_object_set_new(path_attribute, "type", json_string( pa_id_to_name[x] ));
+
+        json_object_set_new( path_attribute, "type", json_string(path_attribute_string((uint8_t) x)) );
+        json_object_set_new( path_attribute, "type_code", json_integer(x) );
+
+        //Path attribute flags
         json_array_append_new( flags, json_string(pa_flag_optional_string( msg->update->path_attrs[x]->flags )));
         json_array_append_new( flags, json_string(pa_flag_transitive_string( msg->update->path_attrs[x]->flags )));
         json_array_append_new( flags, json_string(pa_flag_partial_string( msg->update->path_attrs[x]->flags )));
         json_array_append_new( flags, json_string(pa_flag_extended_string( msg->update->path_attrs[x]->flags )) );
-
         json_object_set_new(path_attribute, "flags", flags);
 
 
-        pa_flag_optional_string( msg->update->path_attrs[x]->flags) ;
-        pa_flag_transitive_string( msg->update->path_attrs[x]->flags) ;
-        pa_flag_partial_string( msg->update->path_attrs[x]->flags) ;
-        pa_flag_extended_string( msg->update->path_attrs[x]->flags) ;
+        json_object_set_new(path_attribute, "flags_low_nibble", json_integer(msg->update->path_attrs[x]->flags & 0xF));
 
+        //Append what we've got and continue if we can't parse the path attribute (yet!)
+        if (!path_attr_dispatch[x]) {
+            json_array_append_new(path_attributes, path_attribute);
+            continue;
+        }
+
+        //Add details about the known path attribute
         path_attribute_specific = path_attr_dispatch[x](msg->update->path_attrs[x]);
         json_object_update( path_attribute, path_attribute_specific );
         json_decref(path_attribute_specific);

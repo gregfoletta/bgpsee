@@ -632,8 +632,8 @@ struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
     attr->type = uchar_to_uint8_inc(pos);
 
     
-    //One or two octet length?
-    if (attr->flags & 0x16) {
+    //Is the extended flag set?
+    if (attr->flags & 0x10) {
         attr->length = uchar_be_to_uint16_inc(pos);
     } else {
         attr->length = uchar_to_uint8_inc(pos);
