@@ -595,3 +595,33 @@ char *safi_string(uint16_t safi) {
     return safi_strings[ safi ];
 }
 
+char *path_attribute_flags[][4] = {
+    { "well-known", "optional" },
+    { "non-transitive", "transitive" },
+    { "partial", "complete" },
+    { "standard", "extended" }
+};
+
+
+enum {
+    PA_FLAG_OPTIONAL,
+    PA_FLAG_TRANSITIVE,
+    PA_FLAG_PARTIAL,
+    PA_FLAG_EXTENDED
+};
+
+char *pa_flag_optional_string(uint8_t flag) {
+    return path_attribute_flags[PA_FLAG_OPTIONAL][ (flag & 0x80) >> 7 ];
+}
+
+char *pa_flag_transitive_string(uint8_t flag) {
+    return path_attribute_flags[PA_FLAG_TRANSITIVE][ (flag & 0x80) >> 7 ];
+}
+
+char *pa_flag_partial_string(uint8_t flag) {
+    return path_attribute_flags[PA_FLAG_PARTIAL][ (flag & 0x80) >> 7 ];
+}
+
+char *pa_flag_extended_string(uint8_t flag) {
+    return path_attribute_flags[PA_FLAG_EXTENDED][ (flag & 0x80) >> 7 ];
+}

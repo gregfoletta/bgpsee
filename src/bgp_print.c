@@ -448,17 +448,35 @@ json_t *construct_json_update(struct bgp_msg *msg) {
 
     //Path attributes
     json_object_set_new( leaf, "path_attribute_length", json_integer(msg->update->path_attr_length) );
-    json_t *path_attributes = json_object();
+
+    json_t *path_attributes = json_array();
     for (int x = 0; x <= AGGREGATOR; x++) {
         if (!msg->update->path_attrs[x] || !path_attr_dispatch[x]) {
             continue;
         }
-        //Add the new path attribute object
-        json_object_set_new(
-            path_attributes,
-            pa_id_to_name[x],
-            path_attr_dispatch[x](msg->update->path_attrs[x])
-        );
+        json_t *path_attribute = json_object();
+        json_t *path_attribute_specific;
+        json_t *flags = json_array();
+
+        json_object_set_new(path_attribute, "type", json_string( pa_id_to_name[x] ));
+        json_array_append_new( flags, json_string(pa_flag_optional_string( msg->update->path_attrs[x]->flags )));
+        json_array_append_new( flags, json_string(pa_flag_transitive_string( msg->update->path_attrs[x]->flags )));
+        json_array_append_new( flags, json_string(pa_flag_partial_string( msg->update->path_attrs[x]->flags )));
+        json_array_append_new( flags, json_string(pa_flag_extended_string( msg->update->path_attrs[x]->flags )) );
+
+        json_object_set_new(path_attribute, "flags", flags);
+
+
+        pa_flag_optional_string( msg->update->path_attrs[x]->flags) ;
+        pa_flag_transitive_string( msg->update->path_attrs[x]->flags) ;
+        pa_flag_partial_string( msg->update->path_attrs[x]->flags) ;
+        pa_flag_extended_string( msg->update->path_attrs[x]->flags) ;
+
+        path_attribute_specific = path_attr_dispatch[x](msg->update->path_attrs[x]);
+        json_object_update( path_attribute, path_attribute_specific );
+        json_decref(path_attribute_specific);
+        
+        json_array_append_new(path_attributes, path_attribute);
     }
 
     json_object_set_new( leaf, "path_attributes", path_attributes );
@@ -476,6 +494,7 @@ json_t *construct_json_update(struct bgp_msg *msg) {
 }
 
 json_t *construct_json_pa_origin(struct bgp_path_attribute *attr) {
+    json_t *origin = json_object();
     char *origin_string[] = {
         "IGP",
         "EGP",
@@ -486,7 +505,9 @@ json_t *construct_json_pa_origin(struct bgp_path_attribute *attr) {
         return json_object();
     }
 
-    return json_string(origin_string[ attr->origin ]);
+    json_object_set_new( origin, "origin", json_string(origin_string[ attr->origin ]) );
+
+    return origin;
 }
 
 json_t *construct_json_pa_as_path(struct bgp_path_attribute *attr) {
@@ -533,23 +554,30 @@ json_t *construct_json_pa_as_path(struct bgp_path_attribute *attr) {
 }
 
 json_t *construct_json_next_hop(struct bgp_path_attribute *attr) {
+    json_t *nh = json_object();
     char *nh_str = ipv4_string(attr->next_hop);
-    json_t *nh = json_string(nh_str);
+    json_object_set_new(nh, "next_hop", json_string(nh_str) );
     free(nh_str);
 
     return nh;
 }
 
 json_t *construct_json_med(struct bgp_path_attribute *attr) {
-    return json_integer(attr->multi_exit_disc);
+    json_t *med = json_object();
+    json_object_set_new( med, "med", json_integer(attr->multi_exit_disc) );
+    return med;
 }
 
 json_t *construct_json_local_pref(struct bgp_path_attribute *attr) {
-    return json_integer(attr->local_pref);
+    json_t *local_pref = json_object();
+    json_object_set_new( local_pref, "local_pref", json_integer(attr->local_pref) );
+    return local_pref;
 }
 
 json_t *construct_json_atomic_aggregate(struct bgp_path_attribute *attr) {
-    return json_boolean(1);
+    json_t *at_agg= json_object();
+    json_object_set_new( at_agg, "atomic_aggregate", json_boolean(1) );
+    return at_agg;
 }
 
 json_t *construct_json_aggregator(struct bgp_path_attribute *attr) {
