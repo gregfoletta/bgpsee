@@ -392,7 +392,7 @@ struct bgp_capability *parse_optional_capabilities(unsigned char *params, uint8_
         
         // cap->code is a uint8_t, and we've allocated 256 in the dispatch table,
         // so every value will point to a valid function
-        if ( !capability_dispatch[ cap->code ](cap, pos, cap->length) ) {
+        if ( capability_dispatch[ cap->code ](cap, pos, cap->length) < 0 ) {
             log_print(LOG_WARN, "Capability parsing returned with error\n");
         }
 
