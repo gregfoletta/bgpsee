@@ -20,41 +20,24 @@
 //#define MSG_TYPE(x) (uchar_to_uint8(x->raw + BGP_HEADER_MARKER_LEN + 2)) //Type is the next byte after the length
 
 
-//Index matches the BGP message code
-char *bgp_msg_code[] = {
-    "<Reserved>",
-    "OPEN",
-    "UPDATE", 
-    "NOTIFICATION",
-    "KEEPALIVE",
-    "ROUTE-REFRESH"
-};
-
-//Index matches the path attribute code
-char *pa_type_code[] = {
-    "<Reserved>",
-    "ORIGIN",
-    "AS_PATH",
-    "NEXT_HOP",
-    "MULTI_EXIT_DISC",
-    "LOCAL_PREF",
-    "ATOMIC_AGGREGATE",
-    "AGGREGATOR"
-};
-
-
-
 //Non-public functions
 int validate_header(unsigned char *, struct bgp_msg *);
 struct bgp_msg *alloc_bgp_msg(const uint16_t length, enum bgp_msg_type type);
 
 
 int parse_open(struct bgp_msg *, unsigned char *);
+int free_open(struct bgp_open *);
+
 int parse_update(struct bgp_msg *, unsigned char *);
+int free_update(struct bgp_update *);
+
+int free_path_attributes(struct bgp_update *);
+int free_as_path(struct bgp_path_attribute *);
+int free_aggregator(struct bgp_path_attribute *);
+
 int parse_keepalive(struct bgp_msg *);
 int parse_notification(struct bgp_msg *, unsigned char *);
 int parse_route_refresh(struct bgp_msg *);
-
 
 /*
     recv_msg:
@@ -161,8 +144,6 @@ exit:
     return message;
 }
 
-int free_update(struct bgp_update *);
-int free_open(struct bgp_open *);
 
 int free_msg(struct bgp_msg *message) {
     switch (message->type) {
@@ -179,9 +160,6 @@ int free_msg(struct bgp_msg *message) {
 }
 
 
-int free_path_attributes(struct bgp_update *);
-int free_as_path(struct bgp_path_attribute *);
-int free_aggregator(struct bgp_path_attribute *);
 
 int free_update(struct bgp_update *update) {
     struct list_head *i, *tmp;
@@ -800,7 +778,8 @@ int parse_keepalive(struct bgp_msg *message) {
     return 0;
 }
 
-
+//TODO: any function sending a message should create the message
+//then put it on a send queue, rather than sending directly
 ssize_t send_keepalive(int fd) {
     //Keepalive consists only of the BGP header
     unsigned char message_buffer[BGP_HEADER_LENGTH];
