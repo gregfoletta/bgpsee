@@ -443,9 +443,11 @@ void *bgp_peer_thread(void *param) {
                 message->peer_name = peer->name;
                 message->id = peer->stats.total++;
 
+                //Add the message to the queue and continue
                 log_print(LOG_DEBUG, "Adding to ingress and output queues\n");
                 list_add_tail(&message->ingress, &peer->ingress_q);
                 list_add_tail(&message->output, &peer->output_q);
+                continue;
             }
         } else if (readable_fds < 0) {
             log_print(LOG_ERROR, "select() error, peer thread returning\n");
@@ -629,14 +631,14 @@ int fsm_state_established(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
         send_keepalive(peer->socket.fd);
     }
 
-    message = pop_ingress_queue(peer);
-
-    if (message) {
-        switch (message->type) {
-            case KEEPALIVE:
-                log_print(LOG_DEBUG, "Received KEEPALIVE, resetting HoldTimer\n");
-                start_timer(peer->local_timers, HoldTimer);
-                break;
+    while( (message = pop_ingress_queue(peer)) ) {
+        if (message) {
+            switch (message->type) {
+                case KEEPALIVE:
+                    log_print(LOG_DEBUG, "Received KEEPALIVE, resetting HoldTimer\n");
+                    start_timer(peer->local_timers, HoldTimer);
+                    break;
+            }
         }
     }
 
