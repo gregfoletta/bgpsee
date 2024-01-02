@@ -15,6 +15,7 @@
 #include "bgp_peer.h"
 #include "bgp_message.h"
 #include "bgp_timers.h"
+#include "bgp_path_attributes.h"
 
 #include "debug.h"
 #include "log.h"
@@ -67,6 +68,12 @@ struct bgp_instance *create_bgp_instance(uint16_t local_asn, uint32_t local_rid,
     i->local_asn = local_asn;
     i->local_rid = local_rid;
     i->n_peers = 0;
+
+    //Initialise dispatch tables
+    if (init_pa_dispatch() < 0) {
+        log_print(LOG_ERROR, "Could not initialise path attribute dispatch table");
+        return NULL;
+    }
 
     return i;
 }

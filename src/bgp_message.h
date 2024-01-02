@@ -8,6 +8,16 @@
 //Including NULL
 #define MAX_IPV4_ROUTE_STRING 18 + 1
 
+struct bgp_parameter {
+    uint8_t type;
+    uint8_t length;
+    union {
+        uint8_t value;
+        struct bgp_capability *capability;
+    };
+    struct list_head list;
+};
+
 enum bgp_msg_type {
     OPEN = 1,
     UPDATE,
@@ -37,17 +47,6 @@ struct bgp_capability {
     };
 };
 
-
-struct bgp_parameter {
-    uint8_t type;
-    uint8_t length;
-    union {
-        uint8_t value;
-        struct bgp_capability *capability;
-    };
-    struct list_head list;
-};
-
 //OPEN message
 struct bgp_open {
     uint8_t version;
@@ -58,51 +57,8 @@ struct bgp_open {
     struct list_head parameters;
 };
 
-/*
- UPDATE message and its dependencies
- https://datatracker.ietf.org/doc/html/rfc4271#section-4.3
-*/
 
-struct path_segment {
-    uint8_t type;
-    uint8_t n_as;
-    uint16_t *as;
-    struct list_head list;
-};
-
-struct as_path {
-    int n_segments;
-    int n_total_as;
-    struct list_head segments;
-};
-
-struct aggregator {
-    uint16_t asn;
-    uint32_t ip;
-};
-
-struct bgp_path_attribute {
-    uint8_t flags;
-    uint8_t type;
-    //16 bits covers standard and extended length;
-    uint16_t length;
-    union {
-        uint8_t origin;
-        struct as_path *as_path;
-        uint32_t next_hop;
-        uint32_t multi_exit_disc;
-        uint32_t local_pref;
-        //Atomic aggregate is length zero, defined only by the type
-        struct aggregator *aggregator;
-    }; 
-};
-
-/* 
- * Length is in in bits (as per the length field in the NLRI information
- * But we add in bytes (which isn't in the BGP UPDATE). Bytes must be between
- * 0 and 4 inclusive.
-*/
-
+#define MAX_ATTRIBUTE 255
 
 struct ipv4_nlri {
     uint8_t length;
@@ -111,24 +67,6 @@ struct ipv4_nlri {
     struct list_head list;
     char string[MAX_IPV4_ROUTE_STRING];
 };
-
-/*
- * Path attributes index by their value, running from 0-255
- * https://www.iana.org/assignments/bgp-parameters/bgp-parameters.xhtml
- * 
- */
-
-enum bgp_update_attrs {
-    ORIGIN = 1,
-    AS_PATH,
-    NEXT_HOP,
-    MULTI_EXIT_DISC,
-    LOCAL_PREF,
-    ATOMIC_AGGREGATE,
-    AGGREGATOR
-};
-
-#define MAX_ATTRIBUTE 255
 
 struct bgp_update {
     //Withdrawn routes

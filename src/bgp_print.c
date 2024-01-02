@@ -10,20 +10,21 @@
 #include "bgp_message.h"
 #include "bgp_print.h"
 #include "bgp_strings.h"
+#include "bgp_path_attributes.h"
 #include "list.h"
 
 
 int print_msg_stdout(struct bgp_peer *, struct bgp_msg *);
 int print_msg_json(struct bgp_peer *, struct bgp_msg *);
 
-    char *type_string[] = {
-        "<NULL>",
-        "OPEN",
-        "UPDATE",
-        "NOTIFICATON",
-        "KEEPALIVE",
-        "ROUTE-REFRESH"
-    };
+char *type_string[] = {
+    "<NULL>",
+    "OPEN",
+    "UPDATE",
+    "NOTIFICATON",
+    "KEEPALIVE",
+    "ROUTE-REFRESH"
+};
 
 /* NOTE:
  * The code in here is far from perfect, but gets the job done.
@@ -56,25 +57,9 @@ int _set_bgp_output(struct bgp_peer *peer, enum bgp_output format) {
  */
 
 int print_msg_stdout(struct bgp_peer *peer, struct bgp_msg *msg) {
-    void (*dispatch[5]) (struct bgp_msg *) = {
-        &print_open,
-        &print_update,
-        &print_notification,
-        &print_keepalive,
-        &print_routerefresh,
-    };
-
-    if (msg->type > 4) {
-        return -1;
-    }
-
-
-    printf("recv_time=%ld name=%s id=%ld type=%s length=%d ", msg->recv_time, msg->peer_name, msg->id, type_string[ msg->type ],  msg->length); 
-    dispatch[msg->type - 1](msg);
-
+    //We've removed non-JSON output in version 0.0.4
     return 0;
 }
-
 
 void initialise_output(struct bgp_peer *peer) {
     pthread_mutex_lock(&peer->stdout_lock);
@@ -82,66 +67,14 @@ void initialise_output(struct bgp_peer *peer) {
     peer->print_msg = print_msg_stdout;
 }
 
-void print_open(struct bgp_msg *msg) {
-    printf(
-        "version=%d, asn=%d, hold_time=%d, router_id=%d, param_len=%d\n",
-        msg->open.version,
-        msg->open.asn,
-        msg->open.hold_time,
-        msg->open.router_id,
-        msg->open.opt_param_len
-    );
-
-    //TODO: parameters
-}
-
-void print_pa_origin(struct bgp_path_attribute *pa) {
-    char *origin_string[] = {
-        "IGP",
-        "EGP",
-        "INCOMPLETE"
-    };
-
-    if (pa->origin > 2) {
-        return;
-    }
-
-    printf("origin=%s ", origin_string[ pa->origin ]);
-}
-
-void print_pa_as_path(struct bgp_path_attribute *pa) {
-    struct path_segment *seg;
-    struct list_head *i;
-
-    if (!pa->as_path) {
-        return;
-    }
-
-    printf(
-        "n_as_segments=%d n_total_as=%d ", pa->as_path->n_segments, pa->as_path->n_total_as
-    );
-
-    printf("as_path=\"");
-    list_for_each(i, &pa->as_path->segments) {
-        seg = list_entry(i, struct path_segment, list);
-        for (int x = 0; x < seg->n_as; x++) {
-            printf("%d", seg->as[x]);
-            //No comma on the last entry
-            if (x == seg->n_as - 1) {
-                break;
-            }
-            printf(",");
-        }
-    }
-    printf("\" ");
-}
-
-
 /*
  * The assumption here is that we're using this after we've pulled
  * the IPv4 address off the network, thus it's in host byte order,
  */
-char *ipv4_string(uint32_t ipv4) {
+
+//TODO: defined as static because it's also in bgp_path_attributes.
+//Should be pulled out with other helpers into another file at some point
+static char *ipv4_string(uint32_t ipv4) {
     uint8_t octets[4];
     char *ipv4_string;
 
@@ -170,122 +103,6 @@ char *ipv4_string(uint32_t ipv4) {
 
     return ipv4_string;
 }
-
-
-
-//This is gross and yuck
-void print_ipv4(uint32_t ipv4) {
-    char *ipv4_str = ipv4_string(ipv4);
-
-    if (!ipv4_str) {
-        return;
-    }
-
-    printf("%s", ipv4_str);
-}
-
-void print_next_hop(struct bgp_path_attribute *pa) {
-    printf("next_hop=");
-    print_ipv4(pa->next_hop);
-    printf(" ");
-}
-
-void print_med(struct bgp_path_attribute *pa) {
-    printf("med=%d ", pa->multi_exit_disc);
-}
-
-void print_local_pref(struct bgp_path_attribute *pa) {
-    printf("local_pref=%d ", pa->local_pref);
-}
-
-void print_atomic_aggregate(struct bgp_path_attribute *pa) {
-    printf("atomic_aggregate=1 ");
-}
-
-void print_aggregator(struct bgp_path_attribute *pa) {
-    printf("aggregator_asn=%d ", pa->aggregator->asn);
-    printf("aggregator_ip=");
-    print_ipv4(pa->aggregator->ip);
-    printf(" ");
-}
-
-
-void print_update(struct bgp_msg *msg) {
-    struct list_head *i;
-    struct ipv4_nlri *nlri;
-
-    //+1 to account for 0 at the start
-    void (*path_attr_dispatch[AGGREGATOR + 1]) (struct bgp_path_attribute *) = {
-        NULL,
-        &print_pa_origin,
-        &print_pa_as_path,
-        &print_next_hop,
-        &print_med,
-        &print_local_pref,
-        &print_atomic_aggregate,
-        &print_aggregator
-    };
-
-
-    //Print withdrawn routes
-    printf(
-        "widthdrawn_route_length=%d withdrawn_routes=\"",
-        msg->update->withdrawn_route_length
-    );
-
-    list_for_each(i, &msg->update->withdrawn_routes) {
-        nlri = list_entry(i, struct ipv4_nlri, list);
-        printf("%s", nlri->string);
-        if (!list_is_last(i, &msg->update->withdrawn_routes)) {
-            printf(",");
-        }
-    }
-    printf("\" ");
-
-
-    //Print path attributes
-    printf(
-        "path_attribute_length=%d ",
-        msg->update->path_attr_length
-    );
-    for (int x = 0; x < AGGREGATOR; x++) {
-        if (!msg->update->path_attrs[x] || !path_attr_dispatch[x]) {
-            continue;
-        }
-
-        path_attr_dispatch[x](msg->update->path_attrs[x]);
-    }
-
-    //Print NLRI
-    printf("nlri=\"");
-    list_for_each(i, &msg->update->nlri) {
-        nlri = list_entry(i, struct ipv4_nlri, list);
-        printf("%s", nlri->string);
-        if (!list_is_last(i, &msg->update->nlri)) {
-            printf(",");
-        }
-    }
-    printf("\"\n");
-}
-
-
-void print_notification(struct bgp_msg *msg) {
-    printf(
-        "code=%d, subcode=%d, data=\n",
-        msg->notification.code,
-        msg->notification.subcode
-    );
-
-}
-
-void print_keepalive(struct bgp_msg *msg) {
-    printf("\n");
-}
-
-void print_routerefresh(struct bgp_msg *msg) {
-
-}
-
 
 /*
  * JSON Output
@@ -410,20 +227,7 @@ json_t *construct_json_aggregator(struct bgp_path_attribute *);
 json_t *construct_json_update(struct bgp_msg *msg) {
     struct list_head *i;
     struct ipv4_nlri *nlri;
-
-    //TODO: Another instance where we should probably be initialising this
-    //dispatch table at the start, rather than every time we parse a 
-    //message
-    json_t *(*path_attr_dispatch[256]) (struct bgp_path_attribute *);
-    memset(path_attr_dispatch, 0, sizeof(*path_attr_dispatch) * 256);
-    
-    path_attr_dispatch[1] = &construct_json_pa_origin;
-    path_attr_dispatch[2] = &construct_json_pa_as_path;
-    path_attr_dispatch[3] = &construct_json_next_hop;
-    path_attr_dispatch[4] = &construct_json_med;
-    path_attr_dispatch[5] = &construct_json_local_pref;
-    path_attr_dispatch[6] = &construct_json_atomic_aggregate;
-    path_attr_dispatch[7] = &construct_json_aggregator;
+    struct path_attr_funcs pa_dispatch;
 
     json_t *leaf = json_object();
 
@@ -448,6 +252,10 @@ json_t *construct_json_update(struct bgp_msg *msg) {
         if (!msg->update->path_attrs[x]) {
             continue;
         }
+
+        //Get the dispatch table
+        pa_dispatch = get_path_attr_dispatch((uint8_t) x);
+
         json_t *path_attribute = json_object();
         json_t *path_attribute_specific;
         json_t *flags = json_array();
@@ -466,14 +274,8 @@ json_t *construct_json_update(struct bgp_msg *msg) {
 
         json_object_set_new(path_attribute, "flags_low_nibble", json_integer(msg->update->path_attrs[x]->flags & 0xF));
 
-        //Append what we've got and continue if we can't parse the path attribute (yet!)
-        if (!path_attr_dispatch[x]) {
-            json_array_append_new(path_attributes, path_attribute);
-            continue;
-        }
-
         //Add details about the known path attribute
-        path_attribute_specific = path_attr_dispatch[x](msg->update->path_attrs[x]);
+        path_attribute_specific = pa_dispatch.json(msg->update->path_attrs[x]);
         json_object_update( path_attribute, path_attribute_specific );
         json_decref(path_attribute_specific);
         
@@ -492,105 +294,6 @@ json_t *construct_json_update(struct bgp_msg *msg) {
     
     return leaf;
 
-}
-
-json_t *construct_json_pa_origin(struct bgp_path_attribute *attr) {
-    json_t *origin = json_object();
-    char *origin_string[] = {
-        "IGP",
-        "EGP",
-        "INCOMPLETE"
-    };
-
-    if (attr->origin > 2) {
-        return json_object();
-    }
-
-    json_object_set_new( origin, "origin", json_string(origin_string[ attr->origin ]) );
-
-    return origin;
-}
-
-json_t *construct_json_pa_as_path(struct bgp_path_attribute *attr) {
-    struct path_segment *seg;
-    struct list_head *i;
-    json_t *as_path = json_object();
-
-    char *as_type_id_to_name[] = {
-        "<Invalid>",
-        "AS_SET",
-        "AS_SEQUENCE"
-    };
-
-    if (!attr->as_path) {
-        return json_object();
-    }
-
-    json_object_set_new( as_path, "n_as_segments", json_integer(attr->as_path->n_segments) );
-    json_object_set_new( as_path, "n_total_as", json_integer(attr->as_path->n_total_as) );
-
-    json_t *path_segments = json_array();
-    list_for_each(i, &attr->as_path->segments) {
-        json_t *path_segment = json_object();
-        seg = list_entry(i, struct path_segment, list);
-
-        //Invalid segment type
-        if (seg->type == 0 || seg->type > 2) {
-            json_object_set_new( path_segment, "type", json_string("Invalid") );
-        }
-        json_object_set_new( path_segment, "type", json_string(as_type_id_to_name[ seg->type]) );
-        json_object_set_new( path_segment, "n_as", json_integer(seg->n_as) );
-
-        json_t *asns = json_array();
-        for (int x = 0; x < seg->n_as; x++) {
-            json_array_append_new( asns, json_integer(seg->as[x]) );
-        }
-        json_object_set_new( path_segment, "asns", asns );
-        json_array_append_new( path_segments, path_segment );
-    }
-
-    json_object_set_new( as_path, "path_segments", path_segments );
-
-    return as_path;
-}
-
-json_t *construct_json_next_hop(struct bgp_path_attribute *attr) {
-    json_t *nh = json_object();
-    char *nh_str = ipv4_string(attr->next_hop);
-    json_object_set_new(nh, "next_hop", json_string(nh_str) );
-    free(nh_str);
-
-    return nh;
-}
-
-json_t *construct_json_med(struct bgp_path_attribute *attr) {
-    json_t *med = json_object();
-    json_object_set_new( med, "med", json_integer(attr->multi_exit_disc) );
-    return med;
-}
-
-json_t *construct_json_local_pref(struct bgp_path_attribute *attr) {
-    json_t *local_pref = json_object();
-    json_object_set_new( local_pref, "local_pref", json_integer(attr->local_pref) );
-    return local_pref;
-}
-
-json_t *construct_json_atomic_aggregate(struct bgp_path_attribute *attr) {
-    json_t *at_agg= json_object();
-    json_object_set_new( at_agg, "atomic_aggregate", json_boolean(1) );
-    return at_agg;
-}
-
-json_t *construct_json_aggregator(struct bgp_path_attribute *attr) {
-    json_t *aggregator = json_object();
-    char *agg_ip_str = ipv4_string(attr->aggregator->ip);
-
-    json_object_set_new( aggregator, "aggregator_asn", json_integer(attr->aggregator->asn) );
-    json_object_set_new( aggregator, "aggregator_ip", json_string(agg_ip_str) );
-
-    free(agg_ip_str);
-
-    return aggregator;
 }
 
 

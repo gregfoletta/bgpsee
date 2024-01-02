@@ -6,6 +6,7 @@
 
 #include "debug.h"
 #include "bgp_message.h"
+#include "bgp_path_attributes.h"
 #include "byte_conv.h"
 #include "list.h"
 #include "log.h"
@@ -15,6 +16,7 @@
 #define BGP_OPEN_HEADER_LEN 10 
 //First byte after BGP header, same as length of header. 
 #define BGP_MAX_LEN 4096 
+
 
 //#define MSG_LENGTH(x) (uchar_be_to_uint16(x->raw + BGP_HEADER_MARKER_LEN)) //Length is the first two bytes after the marker
 //#define MSG_TYPE(x) (uchar_to_uint8(x->raw + BGP_HEADER_MARKER_LEN + 2)) //Type is the next byte after the length
@@ -87,6 +89,8 @@ struct bgp_msg *recv_msg(int socket_fd) {
         message = NULL;
         goto exit;
     }
+
+    log_print(LOG_DEBUG, "BGP header validated, message body length: %d\n", message->body_length);
 
     //TODO: danger area. Let's put some more thought into making sure
     //we validate this length param, as we've got it directly from the
@@ -185,13 +189,7 @@ int free_update(struct bgp_update *update) {
 }
 
 int free_path_attributes(struct bgp_update *update) {
-
-    //Dispatch table
-    int (*pa_free_dispatch[MAX_ATTRIBUTE + 1]) (struct bgp_path_attribute *);
-    memset(pa_free_dispatch, 0, sizeof(pa_free_dispatch));
-
-    pa_free_dispatch[AS_PATH] = &free_as_path;
-    pa_free_dispatch[AGGREGATOR] = &free_aggregator;
+    struct path_attr_funcs pa_dispatch;
 
     //Note the <=
     for (int attr = ORIGIN; attr <= MAX_ATTRIBUTE; attr++) {
@@ -199,42 +197,14 @@ int free_path_attributes(struct bgp_update *update) {
             continue;
         }
 
-        //If available, dispatch to the specific parameter free function
-        if (pa_free_dispatch[ attr ]) {
-            pa_free_dispatch[ attr ]( update->path_attrs[ attr ] );
-        }
+        pa_dispatch = get_path_attr_dispatch((uint8_t) attr);
 
-        //Free the parameter, which may have had its internals been freed above, or may be
-        //an unparsed but allocated attribute
-        free(update->path_attrs[ attr ]);
+        //Dispatch to the specific parameter free function
+        pa_dispatch.free( update->path_attrs[ attr ] );
     }
 
     return 0;
 }
-
-int free_as_path(struct bgp_path_attribute *attribute) {
-    struct list_head *i, *tmp;
-    struct path_segment *segment;
-
-    list_for_each_safe(i, tmp, &attribute->as_path->segments) {
-        segment = list_entry(i, struct path_segment, list);
-        list_del(i);
-        free(segment->as);
-        free(segment);
-    }
-    
-    free(attribute->as_path);
-
-    return 0;
-}
-
-
-int free_aggregator(struct bgp_path_attribute *attribute) {
-    free(attribute->aggregator); 
-
-    return 0;
-}
-    
 
 
 int validate_header(unsigned char *header, struct bgp_msg *message) {
@@ -503,102 +473,10 @@ ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time, uin
 }
 
 
-//GCC thinks seg is leaked, but it's added to the as path segment and
-//freed in free_as_path()
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
-struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length) {
-    struct as_path *path;
-    struct path_segment *seg;
-    unsigned char **pos;
-    uint16_t length;
-    int n;
-
-    pos = body;
-    //Remove two bytes to account or type and flags of the attrbute
-    length = attr_length;
-
-    path = calloc(1, sizeof(*path));    
-
-    if (!path) {
-        return NULL;
-    }
-
-    path->n_segments = 0;
-    path->n_total_as = 0;
-    INIT_LIST_HEAD(&path->segments);
-
-    //TODO: length sanity check
-    while (length > 0) {
-        seg = calloc(1, sizeof(*seg));
-        
-        if (!seg) {
-            goto error;
-        }
-
-        INIT_LIST_HEAD(&seg->list);
-
-        seg->type = uchar_to_uint8_inc(pos);
-        //Number of ASes, not the number of bytes
-        seg->n_as = uchar_to_uint8_inc(pos);
-        length -= 2;
-
-        if (length <= 0) {
-            goto error;
-        }
-
-        seg->as = malloc(seg->n_as * sizeof(seg->as));
-
-        if (!seg->as) {
-            goto error;
-        }
-
-        //TODO: length check sanity
-        for (n = 0; n < seg->n_as; n++) {
-            seg->as[n] = uchar_be_to_uint16_inc(pos);
-            length -= 2;
-        }
-
-        list_add_tail(&seg->list, &path->segments);
-        path->n_segments++;
-        path->n_total_as =+ seg->n_as;
-
-        seg = NULL;
-    }
-
-    return path;
-
-    error:
-    free(seg);
-    free(path);
-    return NULL;
-
-}
-#pragma GCC diagnostic pop
-
-struct aggregator *parse_update_aggregator(unsigned char **body) {
-    struct aggregator *agg;
-    unsigned char **pos;
-
-    pos = body;
-
-    agg = calloc(1, sizeof(*agg));
-
-    if (!agg) {
-        return NULL;
-    }
-
-    agg->asn = uchar_be_to_uint16_inc(pos);
-    agg->ip = uchar_be_to_uint32_inc(pos);
-
-    return agg;
-}
-
-
-
 struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
     unsigned char **pos = body;
     struct bgp_path_attribute *attr;
+    struct path_attr_funcs pa_dispatch;
 
     attr = calloc(1, sizeof(*attr));
 
@@ -609,7 +487,6 @@ struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
     attr->flags = uchar_to_uint8_inc(pos);
     attr->type = uchar_to_uint8_inc(pos);
 
-    
     //Is the extended flag set?
     if (attr->flags & 0x10) {
         attr->length = uchar_be_to_uint16_inc(pos);
@@ -617,34 +494,12 @@ struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
         attr->length = uchar_to_uint8_inc(pos);
     }
 
-    switch (attr->type) {
-        case ORIGIN:
-            attr->origin = uchar_to_uint8_inc(pos);
-            break;
-        case AS_PATH:
-            if (attr->length > 0) {
-                attr->as_path = parse_update_as_path(pos, attr->length);
-            }
-            break;
-        case NEXT_HOP:
-            attr->next_hop = uchar_be_to_uint32_inc(pos);
-            break;
-        case MULTI_EXIT_DISC:
-            attr->multi_exit_disc = uchar_be_to_uint32_inc(pos);
-            break;
-        case LOCAL_PREF:
-            attr->next_hop = uchar_be_to_uint32_inc(pos);
-            break;
-        case ATOMIC_AGGREGATE:
-            //Length of zero, type is enough to define this
-            break;
-        case AGGREGATOR:
-            attr->aggregator = parse_update_aggregator(pos);
-            break;
-        default:
-            //Skip over the top of the attribute
-            *pos += attr->length;
+    pa_dispatch = get_path_attr_dispatch(attr->type);
+    if (pa_dispatch.parse(attr, pos, attr->length) < 0) {
+        log_print(LOG_DEBUG, "Path attribute %d parsing failed\n", attr->type);
+        return NULL;
     }
+
 
     return attr;
 }
@@ -718,6 +573,7 @@ int parse_update(struct bgp_msg *message, unsigned char *body) {
 
     //Parse the path attributes
     message->update->path_attr_length = uchar_be_to_uint16_inc(&pos);
+    log_print(LOG_DEBUG, "Parsing path attributes with length %d\n", message->update->path_attr_length);
 
     //TODO: Static array of 32 attrs. This could be done better (list?)
     //TODO: Better length sanity checks
