@@ -383,8 +383,6 @@ int __pa_aggregator(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t
             agg->asn = uchar_be_to_uint16_inc(local_pos);
             break;
         case ASN_32:
-            printf("%x %x %x %x\n", **local_pos, *(*local_pos + 1), *(*local_pos+2), *(*local_pos+3));
-            printf("%u\n", uchar_be_to_uint32(*local_pos));
             agg->asn = uchar_be_to_uint32_inc(local_pos);
             break;
         default:
