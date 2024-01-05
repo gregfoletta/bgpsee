@@ -861,7 +861,7 @@ char *path_attribute_string(uint8_t type) {
 
 char *path_attribute_flags[][4] = {
     { "well-known", "optional" },
-    { "non-transitive", "transitive" },
+    { "transitive", "non-transitive" },
     { "complete", "partial" },
     { "standard", "extended" }
 };

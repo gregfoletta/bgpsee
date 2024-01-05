@@ -7,7 +7,8 @@
 struct path_segment {
     uint8_t type;
     uint8_t n_as;
-    uint16_t *as;
+    //Support four-octet ASNs
+    uint32_t *as;
     struct list_head list;
 };
 
@@ -18,20 +19,33 @@ struct as_path {
 };
 
 struct aggregator {
-    uint16_t asn;
+    //Suport four-octet ASNs
+    uint32_t asn;
     uint32_t ip;
 };
 
 
-/* 
- * Length is in in bits (as per the length field in the NLRI information
- * But we add in bytes (which isn't in the BGP UPDATE). Bytes must be between
- * 0 and 4 inclusive.
-*/
-
-
-
 struct path_attr_funcs *pa_dispatch;
+
+//Convert the four byte ASNs into ASDot+ string
+char *asdot_plus(uint32_t asn) {
+    uint16_t high, low;
+    char *asdot_plus;
+    low = asn & 0xFFFF;
+    high = (uint16_t) (asn & 0xFFFF0000) >> 16;
+
+    //Maximum ASDot+ string is "65535.65535\0" == 12
+    asdot_plus = calloc(12, sizeof(char));
+
+    if (!asdot_plus) {
+        return NULL;
+    }
+
+    snprintf(asdot_plus, 12, "%d.%d", high, low);
+
+    return asdot_plus;
+}
+
 
 //Functions used when we aren't parsing the path attribute
 //i.e. we haven't implemented the functionality yet
@@ -62,9 +76,7 @@ json_t *pa_default_json(struct bgp_path_attribute *pa) {
     return json_object();
 }
 
-void pa_default_free(struct bgp_path_attribute *pa) {
-    free(pa);
-}
+void pa_default_free(struct bgp_path_attribute *pa) { }
 
 
 /*
@@ -83,10 +95,10 @@ char *ipv4_string(uint32_t ipv4) {
         return NULL;
     }
 
-    octets[0] = (uint8_t) ((ipv4 & 0xff000000) >> 24);
-    octets[1] = (uint8_t) ((ipv4 & 0x00ff0000) >> 16);
-    octets[2] = (uint8_t) ((ipv4 & 0x0000ff00) >> 8);
-    octets[3] = (uint8_t) (ipv4 & 0x000000ff);
+    octets[3] = (uint8_t) ((ipv4 & 0xff000000) >> 24);
+    octets[2] = (uint8_t) ((ipv4 & 0x00ff0000) >> 16);
+    octets[1] = (uint8_t) ((ipv4 & 0x0000ff00) >> 8);
+    octets[0] = (uint8_t) (ipv4 & 0x000000ff);
 
     snprintf(
         ipv4_string,
@@ -132,11 +144,16 @@ json_t *pa_origin_json(struct bgp_path_attribute *pa) {
  * AS PATH
  */
 
+enum bgp_asn_size {
+    ASN_16,
+    ASN_32,
+};
+
 //GCC thinks seg is leaked, but it's added to the as path segment and
 //freed in free_as_path()
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
-int pa_as_path(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t attr_length) {
+int __pa_as_path(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t attr_length, enum bgp_asn_size asn_size) {
     struct as_path *path;
     struct path_segment *seg;
     unsigned char **local_pos;
@@ -184,8 +201,19 @@ int pa_as_path(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t attr
 
         //TODO: length check sanity
         for (n = 0; n < seg->n_as; n++) {
-            seg->as[n] = uchar_be_to_uint16_inc(local_pos);
-            length -= 2;
+            //The seg->as[n] is a uint32_t and holds either the 16 or 32 bit ASNs
+            switch (asn_size) {
+                case ASN_16:
+                    seg->as[n] = uchar_be_to_uint16_inc(local_pos);
+                    length -= 2;
+                    break;
+                case ASN_32:
+                    seg->as[n] = uchar_be_to_uint32_inc(local_pos);
+                    length -= 4;
+                    break;
+                default:
+                    return -1;
+            }
         }
 
         list_add_tail(&seg->list, &path->segments);
@@ -205,6 +233,14 @@ int pa_as_path(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t attr
 
 }
 #pragma GCC diagnostic pop
+
+int pa_as_16_path(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t attr_length) {
+    return __pa_as_path(pa, pos, attr_length, ASN_16);
+}
+
+int pa_as_32_path(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t attr_length) {
+    return __pa_as_path(pa, pos, attr_length, ASN_32);
+}
 
 json_t *pa_as_path_json(struct bgp_path_attribute *pa) {
     struct path_segment *seg;
@@ -238,7 +274,7 @@ json_t *pa_as_path_json(struct bgp_path_attribute *pa) {
 
         json_t *asns = json_array();
         for (int x = 0; x < seg->n_as; x++) {
-            json_array_append_new( asns, json_integer(seg->as[x]) );
+                json_array_append_new( asns, json_integer(seg->as[x]) );
         }
         json_object_set_new( path_segment, "asns", asns );
         json_array_append_new( path_segments, path_segment );
@@ -254,12 +290,16 @@ void pa_as_path_free(struct bgp_path_attribute *pa) {
     struct list_head *i, *tmp;
     struct path_segment *segment;
 
+//GCC thinks free(segment->as) is a double free. I do not believe that's the case
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-double-free"
     list_for_each_safe(i, tmp, &pa->as_path->segments) {
         segment = list_entry(i, struct path_segment, list);
         list_del(i);
         free(segment->as);
         free(segment);
     }
+#pragma GCC diagnostic pop
     
     free(pa->as_path);
 }
@@ -326,7 +366,7 @@ json_t *pa_local_pref_json(struct bgp_path_attribute *pa) {
  * AGGREGATOR
  */
 
-int pa_aggregator(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t attr_length) {
+int __pa_aggregator(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t attr_length, enum bgp_asn_size asn_size) {
     struct aggregator *agg;
     unsigned char **local_pos;
 
@@ -338,12 +378,34 @@ int pa_aggregator(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t a
         return -1;
     }
 
-    agg->asn = uchar_be_to_uint16_inc(local_pos);
+    switch (asn_size) {
+        case ASN_16:
+            agg->asn = uchar_be_to_uint16_inc(local_pos);
+            break;
+        case ASN_32:
+            printf("%x %x %x %x\n", **local_pos, *(*local_pos + 1), *(*local_pos+2), *(*local_pos+3));
+            printf("%u\n", uchar_be_to_uint32(*local_pos));
+            agg->asn = uchar_be_to_uint32_inc(local_pos);
+            break;
+        default:
+            free(agg);
+            return -1;
+    }
+
+
     agg->ip = uchar_be_to_uint32_inc(local_pos);
 
     pa->aggregator = agg;
 
     return 0;
+}
+
+int pa_aggregator_16(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t attr_length) {
+    return __pa_aggregator(pa, pos, attr_length, ASN_16);
+}
+
+int pa_aggregator_32(struct bgp_path_attribute *pa, unsigned char **pos, uint16_t attr_length) {
+    return __pa_aggregator(pa, pos, attr_length, ASN_32);
 }
 
 json_t *pa_aggregator_json(struct bgp_path_attribute *pa) {
@@ -383,7 +445,7 @@ int init_pa_dispatch(void) {
 
     pa_dispatch[ORIGIN].parse = &pa_origin;
     pa_dispatch[ORIGIN].json = &pa_origin_json;
-    pa_dispatch[AS_PATH].parse = &pa_as_path;
+    pa_dispatch[AS_PATH].parse = &pa_as_16_path;
     pa_dispatch[AS_PATH].json = &pa_as_path_json;
     pa_dispatch[AS_PATH].free = &pa_as_path_free;
     pa_dispatch[NEXT_HOP].parse = &pa_nexthop;
@@ -392,9 +454,16 @@ int init_pa_dispatch(void) {
     pa_dispatch[MULTI_EXIT_DISC].json = &pa_med_json;
     pa_dispatch[LOCAL_PREF].parse = &pa_local_pref;
     pa_dispatch[LOCAL_PREF].json = &pa_local_pref_json;
-    pa_dispatch[AGGREGATOR].parse = &pa_aggregator;
+    pa_dispatch[AGGREGATOR].parse = &pa_aggregator_16;
     pa_dispatch[AGGREGATOR].json = &pa_aggregator_json;
     pa_dispatch[AGGREGATOR].free = &pa_aggregator_free;
+
+    pa_dispatch[AS4_PATH].parse = &pa_as_32_path;
+    pa_dispatch[AS4_PATH].json = &pa_as_path_json;
+    pa_dispatch[AS4_PATH].free = &pa_as_path_free;
+    pa_dispatch[AS4_AGGREGATOR].parse = &pa_aggregator_32;
+    pa_dispatch[AS4_AGGREGATOR].json = &pa_aggregator_json;
+    pa_dispatch[AS4_AGGREGATOR].free = &pa_aggregator_free;
 
     return 0;
 }

@@ -192,6 +192,8 @@ int free_path_attributes(struct bgp_update *update) {
     struct path_attr_funcs pa_dispatch;
 
     //Note the <=
+    //TODO: really need to move to a list rather than array of 256 for
+    //the path attributes
     for (int attr = ORIGIN; attr <= MAX_ATTRIBUTE; attr++) {
         if (!update->path_attrs[ attr ]) {
             continue;
@@ -199,8 +201,9 @@ int free_path_attributes(struct bgp_update *update) {
 
         pa_dispatch = get_path_attr_dispatch((uint8_t) attr);
 
-        //Dispatch to the specific parameter free function
+        //Dispatch to the specific parameter free function, then free the attribute
         pa_dispatch.free( update->path_attrs[ attr ] );
+        free(update->path_attrs[ attr ]);
     }
 
     return 0;
@@ -373,18 +376,19 @@ int parse_open_parameters(struct bgp_msg *message, unsigned char **body) {
         param->type = *pos++;
         param->length = *pos++;
 
-        //We only handle capabilities, no other optional parameters
+        //TODO (low priority) handle parameters other than type 2 (capabilities)
         if (param->type != 2) {
             log_print(LOG_WARN, "Received OPEN optional parameter with type %d, skipping\n", param->type);
             //TODO: another overrun check
             *body += param->length;
+            free(param);
             continue;
         }
 
         log_print(LOG_DEBUG, "Received OPEN optional parameter type: %d, length: %d\n", param->type, param->length);
 
         if (param->length == 0) {
-            param ->value = 0;
+            free(param);
             continue;
         }
 

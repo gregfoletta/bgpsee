@@ -60,6 +60,11 @@ struct bgp_open {
 
 #define MAX_ATTRIBUTE 255
 
+/* 
+ * Length is in in bits (as per the length field in the NLRI information
+ * But we add in bytes (which isn't in the BGP UPDATE). Bytes must be between
+ * 0 and 4 inclusive.
+*/
 struct ipv4_nlri {
     uint8_t length;
     uint8_t bytes;
