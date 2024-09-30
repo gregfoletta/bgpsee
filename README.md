@@ -10,11 +10,14 @@ BGPSee is a multi-threaded BGP client for the CLI. It's goal it to allow you to 
 
 # Version
 
-Current version is **0.0.3**
+Current version is **0.0.4**
 
-Major changes from **0.0.2** to **0.0.3**:
-- Now supports JSON as an output format.
-- Now requires [jansson](https://github.com/akheron/jansson) library to support JSON output. 
+Major changes from **0.0.3** to **0.0.4**:
+- Parsing of OPEN message capabilities
+- Better inress queueing
+- Removal of key=value output; JSON is currently the only supported format
+- Added parsing of AS4_PATH and AS4_AGGREGATOR path attributes
+- Outpput of type and type code for all path attributes in an UPDATE
 
 Seee the [CHANGELOG](CHANGELOG.md) for further information.
 
@@ -28,7 +31,6 @@ Usage: bgpsee [options...] <peer> [<peer> ...]
 -a, --asn <asn>		Local ASN of bgpsee. If not provided 65000 will be used.
 -r, --rid <ip>		Local router ID of bgpsee. If not provided 1.1.1.1 will be used.
 -l, --logging <level>	Logging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug 
--f, --format <fmt>	Format of the output, <fmt> may be 'json' or 'kv'. Defaults to 'json'
 -h, --help		Print this help message
 
 <peer> formats: <ip>,<asn> or <ip>,<asn>,<name>

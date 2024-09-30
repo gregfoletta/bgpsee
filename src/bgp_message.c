@@ -8,6 +8,7 @@
 #include "bgp_message.h"
 #include "bgp_path_attributes.h"
 #include "byte_conv.h"
+#include "tlv.h"
 #include "list.h"
 #include "log.h"
 
@@ -456,25 +457,137 @@ int free_open(struct bgp_open *open) {
     return 0;
 }
 
+uint8_t serialise_mp_bgp_capability(struct bgp_capability *cap, unsigned char **dst) {
+    unsigned char *buffer;
+    uint8_t bytes = 4;
+
+    //4 bytes
+    buffer = calloc(bytes, 1);
+
+    if (!buffer) {
+        return 0;
+    }
+
+    uint16_to_uchar_be(&buffer[0], cap->mp_ext->afi);
+    uint8_to_uchar(&buffer[2], 0);
+    uint8_to_uchar(&buffer[3], cap->mp_ext->safi);
+
+    *dst = buffer;
+
+    //Return length
+    return bytes;
+}
+
+
+uint8_t create_open_parameters(unsigned char **pos) {
+    struct tlv *param, *cap;
+    unsigned char *serial_cap = NULL, *serial_param = NULL, *serial_data = NULL;
+    uint8_t cap_len, param_len, total_len = 0;
+    long unsigned int x;
+
+    //Multiprotocol Extensions
+    struct bgp_cap_mp_ext mp_bgp[] = {
+        //v4 Unicast
+        { .afi = 1, .safi = 1, .reserved = 0 },
+        //v4 MPLS
+        { .afi = 1, .safi = 4, .reserved = 0 },
+        //v6 Unicast
+        { .afi = 1, .safi = 1, .reserved = 0 },
+        //v6 MPLS
+        { .afi = 1, .safi = 4, .reserved = 0 }
+    };
+
+    struct bgp_capability capabilities[] = {
+        //Route refresh
+        //{ .code = 2 },
+        //MP Extensions
+        { .code = 1, .mp_ext = &mp_bgp[0] },
+        { .code = 1, .mp_ext = &mp_bgp[1] },
+        { .code = 1, .mp_ext = &mp_bgp[2] },
+        { .code = 1, .mp_ext = &mp_bgp[3] }
+    };
+
+    for (x = 0; x < (sizeof(capabilities) / sizeof(struct bgp_capability)); x++) {
+        cap_len = serialise_mp_bgp_capability(&capabilities[x], &serial_cap);
+
+        if (!cap_len) {
+            return 0;
+        }
+
+        cap = new_tlv(2, cap_len, serial_cap); 
+    
+        if (!cap) {
+            return 0;
+        }
+
+        free(serial_cap);
+        serial_cap = serialise_tlv(param, &param_len);
+
+
+
+        if (!param) {
+            return 0;
+        }
+
+        free(serial_cap);
+
+
+
+    }
+
+
+    free_tlv(param);
+
+    printf("total_len: %d\n", total_len);
+
+    if (!serial_param) {
+        return 0;
+    }
+
+    for (x = 0; x < total_len; x++) {
+        printf("%d ", serial_param[x]);
+    }
+    printf("\n");
+
+    memcpy(*pos, serial_param, total_len);
+    *pos += total_len;
+
+    free(serial_param);
+
+    return total_len;
+}
 
 
 ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time, uint32_t router_id) {
     unsigned char message_buffer[BGP_MAX_MESSAGE_SIZE];
-    unsigned char *pos;
+    unsigned char *pos, *param_len_pos;
+    uint8_t param_len = 0;
 
+    printf("in send open\n");
+
+    //We Create the header after we know the total length from the parameters
     pos = message_buffer + BGP_HEADER_LENGTH;
 
     uint8_to_uchar_inc(&pos, version);
     uint16_to_uchar_be_inc(&pos, asn);
     uint16_to_uchar_be_inc(&pos, hold_time);
     uint32_to_uchar_be_inc(&pos, router_id);
-    //TODO: temp opt param length
-    uint8_to_uchar(pos, 0);
 
-    create_header(BGP_OPEN_HEADER_LENGTH, OPEN, message_buffer);
+    //We don't know the parameter length yet, so we drop a pin for that spot
+    param_len_pos = pos;
+    pos++;
 
-    return send(fd, message_buffer, BGP_OPEN_HEADER_LENGTH, 0);
+    //Drop in the parameters
+    param_len = create_open_parameters(&pos);
+    //Go back and add the parameter length
+    uint8_to_uchar(param_len_pos, param_len);
+
+    //Go back and add the header, including the parmeter size
+    create_header(BGP_OPEN_HEADER_LENGTH + param_len, OPEN, message_buffer);
+
+    return send(fd, message_buffer, BGP_OPEN_HEADER_LENGTH + param_len, 0);
 }
+
 
 
 struct bgp_path_attribute *parse_update_attr(unsigned char **body) {

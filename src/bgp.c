@@ -142,6 +142,7 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     //IP
     peer->peer_ip = sdsnew(peer_ip);
     peer->source_ip = sdsempty();
+    peer->port = sdsnew("179");
 
     strncpy(peer->peer_ip, peer_ip, strlen(peer_ip) + 1);
 
@@ -196,6 +197,7 @@ unsigned int bgp_peer_source(struct bgp_instance *i, unsigned int id, const char
     //Has a source IP already been set?
     if (sdslen(peer->source_ip)) {
         log_print(LOG_WARN, "Source IP for peer %s already set to '%s', no change made\n", peer->name, peer->source_ip);
+        return -2;
     }
 
     //Source IP is empty at this stage
@@ -205,7 +207,21 @@ unsigned int bgp_peer_source(struct bgp_instance *i, unsigned int id, const char
     return 0;
 }
 
+unsigned int bgp_peer_port(struct bgp_instance *i, unsigned int id, const char *port) {
+    struct bgp_peer *peer;
 
+    if (!(peer = get_peer_from_instance(i, id))) {
+        log_print(LOG_WARN, "Peer with ID %d does not exist for BGP instance\n");
+        return -1;
+    }
+
+    //Free the default
+    sdsfree(peer->port);
+    //New port
+    peer->port = sdsnew(port);
+
+    return 0;
+}
 
 int set_bgp_output(struct bgp_instance *i, unsigned int id,  enum bgp_output format) {
     struct bgp_peer *peer;
@@ -242,6 +258,7 @@ void free_bgp_peer(struct bgp_instance *i, unsigned int id) {
 
     //Free the malloc'ed attributes, free the peer and reset the slot
     sdsfree(peer->peer_ip);
+    sdsfree(peer->port);
     sdsfree(peer->source_ip);
     sdsfree(peer->name);
 
@@ -535,7 +552,7 @@ int fsm_state_idle(struct bgp_peer *peer, fd_set *set) {
     start_timer(peer->local_timers, ConnectRetryTimer);
     
     log_print(LOG_INFO, "Opening connection to %s,%d (%s)\n", peer->peer_ip, peer->peer_asn, peer->name);
-    peer->socket.fd = tcp_connect(peer->peer_ip, "179", peer->source_ip);
+    peer->socket.fd = tcp_connect(peer->peer_ip, peer->port, peer->source_ip);
 
     if (peer->socket.fd < 0) {
         log_print(LOG_DEBUG, "TCP connection to %s failed\n", peer->peer_ip);

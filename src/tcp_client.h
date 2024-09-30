@@ -1,3 +1,3 @@
 #include "sds.h"
 
-int tcp_connect(sds, const char *, sds);
+int tcp_connect(sds, sds, sds);

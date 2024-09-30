@@ -1,4 +1,10 @@
 # Change Log
+- 0.0.4
+    - Parsing of OPEN message capabilities
+    - Better ingress queueing
+    - Removal of key=value output; JSON is currently the only supported format
+    - Added parsing of AS4_PATH and AS4_AGGREGATOR path attributes
+    - Outpput of type and type code for all path attributes in an UPDATE
 - 0.0.3
     - Supports JSON as an output format
     - JSON becomes default output format

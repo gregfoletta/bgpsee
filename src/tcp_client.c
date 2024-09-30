@@ -11,7 +11,7 @@
 #include "sds.h"
 
 
-int tcp_connect(sds host, const char *port, sds source) {
+int tcp_connect(sds host, sds port, sds source) {
     int sock_fd, ret;
     struct addrinfo hints, *result, *result_head;
 
@@ -85,7 +85,7 @@ int tcp_connect(sds host, const char *port, sds source) {
     freeaddrinfo(result_head);
 
     if (result == NULL) {
-        log_print(LOG_ERROR, "Unable to connect to %s\n", host);
+        log_print(LOG_ERROR, "Unable to connect to %s:%s\n", host, port);
         return -1;
     }
 

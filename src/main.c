@@ -22,6 +22,7 @@ struct cmdline_opts {
     char *peer;
     char *name;
     sds source_ip;
+    sds port;
     uint16_t peer_asn;
     uint16_t local_asn;
     uint32_t local_rid;
@@ -50,6 +51,7 @@ int main(int argc, char **argv) {
     set_log_level(options.log_level);
 
     if (optind >= argc) {
+        print_help();
         log_print(LOG_ERROR, "No BGP peers specified\n");
         exit(1);
     }
@@ -94,6 +96,10 @@ int main(int argc, char **argv) {
 
         //Set the source address
         bgp_peer_source(bgp_i, bgp_peer_id, options.source_ip);
+        //Set the destination port
+        if(options.port) {
+            bgp_peer_port(bgp_i, bgp_peer_id, options.port);
+        }
         //Set the logging output (global for all peers)
         set_bgp_output(bgp_i, bgp_peer_id, options.format);
 
@@ -144,6 +150,7 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
         .source_ip = NULL,
         .log_level = LOG_INFO,
         .peer = NULL,
+        .port = NULL,
         .peer_asn = 0,
         .local_asn = 65000,
         .local_rid = 0x01010101,
@@ -163,6 +170,7 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
 
     static struct option cmdline_options[] = {
         { "source", required_argument, 0, 's' },
+        { "port", required_argument, 0, 'p' },
         { "asn", required_argument, 0, 'a' },
         { "rid", required_argument, 0, 'r' },
         { "logging", required_argument, 0, 'l'},
@@ -171,7 +179,7 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
     };
 
     while (1) {
-        c = getopt_long(argc, argv, "s:a:r:l:h", cmdline_options, i);
+        c = getopt_long(argc, argv, "s:p:a:r:l:h", cmdline_options, i);
 
         if (c == -1) {
             break;
@@ -185,6 +193,9 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
                 exit(0);
             case 's':
                 option_return.source_ip = sdsnew(optarg);
+                break;
+            case 'p':
+                option_return.port = sdsnew(optarg);
                 break;
             case 'a':
                 option_return.local_asn = (uint16_t) strtol(optarg, NULL, 10);
@@ -205,6 +216,7 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
 void print_help(void) {
     char *help_message = "Usage: bgpsee [options...] <peer> [<peer> ...]\n"
         "-s, --source <ip>\tIP to source BGP connection from\n"
+        "-p, --port <port>\tDestination TCP port, defaults to 179\n"
         "-a, --asn <asn>\t\tLocal ASN of bgpsee. If not provided 65000 will be used.\n"
         "-r, --rid <ip>\t\tLocal router ID of bgpsee. If not provided 1.1.1.1 will be used.\n"
         "-l, --logging <level>\tLogging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug \n"

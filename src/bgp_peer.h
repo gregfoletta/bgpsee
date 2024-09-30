@@ -64,6 +64,7 @@ struct bgp_peer {
     uint64_t peer_caps;
 
     sds peer_ip;
+    sds port;
     sds source_ip;
 
     pthread_t thread;
