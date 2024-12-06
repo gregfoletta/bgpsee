@@ -136,6 +136,24 @@ make
 
 This builds a *bgpsee* executable in the root directory. There is no make install.
 
+
+## Docker Build & Run
+### Debian
+```
+docker build -t bgpsee:debian -f docker/debian/Dockerfile .
+```
+Run it:
+```
+docker run bgpsee:debian
+```
+### RedHat
+```
+docker build -t bgpsee:redhat -f docker/debian/Dockerfile .
+```
+Run it:
+```
+docker run bgpsee:redhat
+```
 # Roadmap
 
 Top 3 items to add in future releases:
