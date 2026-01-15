@@ -136,8 +136,6 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     peer->peer_ip = sdsnew(peer_ip);
     peer->source_ip = sdsempty();
 
-    strncpy(peer->peer_ip, peer_ip, strlen(peer_ip) + 1);
-
     peer->name = sdsnew(peer_name);
 
     //Some values are global from the BGP instance

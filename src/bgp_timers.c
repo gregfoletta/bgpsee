@@ -121,7 +121,9 @@ uint64_t timer_has_fired(struct bgp_local_timer *timers, enum timer timer_id, fd
     timer_fd = timers[timer_id].fd;
 
     if ( FD_ISSET(timer_fd, set) ) {
-        read(timer_fd, &n_fires, sizeof(uint64_t));
+        if (read(timer_fd, &n_fires, sizeof(uint64_t)) < 0) {
+            return 0;
+        }
         return n_fires;
     }
 
