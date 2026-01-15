@@ -2,3 +2,5 @@
 *.swo
 *.o
 bgpsee
+tests/test_byte_conv
+tests/test_bgp_message

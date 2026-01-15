@@ -118,6 +118,7 @@ struct bgp_msg *recv_msg(int socket_fd) {
     message_body = malloc(message->body_length + MSG_PAD);
 
     if (!message_body) {
+        free(message);
         return NULL;
     }
 
@@ -149,10 +150,14 @@ struct bgp_msg *recv_msg(int socket_fd) {
             break;
         default:
             log_print(LOG_DEBUG, "Invalid message type stored in message structure: %d\n", message->type);
+            free(message);
+            free(message_body);
             return NULL;
     }
 
     if (ret < 0) {
+        free(message);
+        free(message_body);
         return NULL;
     }
 

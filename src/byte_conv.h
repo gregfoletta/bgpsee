@@ -31,10 +31,10 @@ static inline uint16_t uchar_be_to_uint16_inc(unsigned char **bytes) {
 
 static inline uint32_t uchar_be_to_uint32(unsigned char *bytes) {
     uint32_t x;
-    x =  (uint32_t) bytes[0]; 
-    x |= (uint32_t) bytes[1] << 8; 
-    x |= (uint32_t) bytes[2] << 16; 
-    x |= (uint32_t) bytes[3] << 24; 
+    x =  (uint32_t) bytes[0] << 24;
+    x |= (uint32_t) bytes[1] << 16;
+    x |= (uint32_t) bytes[2] << 8;
+    x |= (uint32_t) bytes[3];
     return x;
 }
 
@@ -46,14 +46,14 @@ static inline uint32_t uchar_be_to_uint32_inc(unsigned char **bytes) {
 
 static inline uint64_t uchar_be_to_uint64(unsigned char *bytes) {
     uint64_t x;
-    x =  (uint64_t) bytes[0]; 
-    x |= (uint64_t) bytes[1] << 8; 
-    x |= (uint64_t) bytes[2] << 16; 
-    x |= (uint64_t) bytes[3] << 24; 
-    x |= (uint64_t) bytes[1] << 32; 
-    x |= (uint64_t) bytes[1] << 40; 
-    x |= (uint64_t) bytes[2] << 48; 
-    x |= (uint64_t) bytes[2] << 56; 
+    x =  (uint64_t) bytes[0] << 56;
+    x |= (uint64_t) bytes[1] << 48;
+    x |= (uint64_t) bytes[2] << 40;
+    x |= (uint64_t) bytes[3] << 32;
+    x |= (uint64_t) bytes[4] << 24;
+    x |= (uint64_t) bytes[5] << 16;
+    x |= (uint64_t) bytes[6] << 8;
+    x |= (uint64_t) bytes[7];
     return x;
 }
 
