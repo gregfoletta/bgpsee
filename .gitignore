@@ -2,5 +2,7 @@
 *.swo
 *.o
 bgpsee
+obj/
+obj-debug/
 tests/test_byte_conv
 tests/test_bgp_message
