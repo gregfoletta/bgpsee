@@ -384,10 +384,9 @@ struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length)
     path->n_total_as = 0;
     INIT_LIST_HEAD(&path->segments);
 
-    //TODO: length sanity check
-    while (length > 0) {
+    while (length >= 2) {
         seg = calloc(1, sizeof(*seg));
-        
+
         if (!seg) {
             goto error;
         }
@@ -399,25 +398,33 @@ struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length)
         seg->n_as = uchar_to_uint8_inc(pos);
         length -= 2;
 
-        if (length <= 0) {
+        //Validate segment type (1=AS_SET, 2=AS_SEQUENCE)
+        if (seg->type == 0 || seg->type > 2) {
             goto error;
         }
 
-        seg->as = malloc(seg->n_as * sizeof(seg->as));
-
-        if (!seg->as) {
+        //Check we have enough data for all AS numbers (2 bytes each)
+        uint16_t as_bytes_needed = (uint16_t)seg->n_as * 2;
+        if (as_bytes_needed > length) {
             goto error;
         }
 
-        //TODO: length check sanity
-        for (n = 0; n < seg->n_as; n++) {
-            seg->as[n] = uchar_be_to_uint16_inc(pos);
-            length -= 2;
+        if (seg->n_as > 0) {
+            seg->as = malloc(seg->n_as * sizeof(*seg->as));
+
+            if (!seg->as) {
+                goto error;
+            }
+
+            for (n = 0; n < seg->n_as; n++) {
+                seg->as[n] = uchar_be_to_uint16_inc(pos);
+            }
+            length -= as_bytes_needed;
         }
 
         list_add_tail(&seg->list, &path->segments);
         path->n_segments++;
-        path->n_total_as =+ seg->n_as;
+        path->n_total_as += seg->n_as;
 
         seg = NULL;
     }
@@ -489,7 +496,7 @@ struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
             attr->multi_exit_disc = uchar_be_to_uint32_inc(pos);
             break;
         case LOCAL_PREF:
-            attr->next_hop = uchar_be_to_uint32_inc(pos);
+            attr->local_pref = uchar_be_to_uint32_inc(pos);
             break;
         case ATOMIC_AGGREGATE:
             //Length of zero, type is enough to define this
@@ -520,11 +527,15 @@ struct ipv4_nlri *parse_ipv4_nlri(unsigned char **body) {
     nlri->length = uchar_to_uint8_inc(pos);
     //Fast ceil(length / 8)
     nlri->bytes = (uint8_t) (nlri->length + 8 - 1) / 8;
-    //printf("Length: %d, Bytes: %d\n", nlri->length, nlri->bytes);
+
+    //IPv4 prefix cannot exceed 32 bits (4 bytes)
+    if (nlri->bytes > 4) {
+        free(nlri);
+        return NULL;
+    }
 
     for (int x = 0; x < nlri->bytes; x++) {
         nlri->prefix[x] = uchar_to_uint8_inc(pos);
-        //printf("%d.", nlri->prefix[x]);
     }
 
     snprintf(
@@ -555,10 +566,25 @@ int parse_update(struct bgp_msg *message, unsigned char *body) {
     INIT_LIST_HEAD(&message->update->withdrawn_routes);
     INIT_LIST_HEAD(&message->update->nlri);
 
+    //body_length is message->length - 19 (BGP header)
+    //UPDATE body has: 2 bytes withdrawn_len + withdrawn + 2 bytes pa_len + pa + nlri
+    //Minimum UPDATE body is 4 bytes (two length fields)
+    if (message->body_length < 4) {
+        free(message->update);
+        return -1;
+    }
+
     message->update->withdrawn_route_length = uchar_be_to_uint16_inc(&pos);
-    
+
+    //Validate withdrawn_route_length fits in remaining body
+    //Remaining after withdrawn_len field: body_length - 2
+    //Need: withdrawn_route_length + 2 (path_attr_length field)
+    if (message->update->withdrawn_route_length > message->body_length - 4) {
+        free(message->update);
+        return -1;
+    }
+
     //Parse withdrawn routes
-    //TODO: sanity checks
     if (message->update->withdrawn_route_length > 0) {
         unsigned char *withdrawn_end = pos + message->update->withdrawn_route_length;
 
@@ -575,8 +601,14 @@ int parse_update(struct bgp_msg *message, unsigned char *body) {
     //Parse the path attributes
     message->update->path_attr_length = uchar_be_to_uint16_inc(&pos);
 
-    //TODO: Static array of 32 attrs. This could be done better (list?)
-    //TODO: Better length sanity checks
+    //Validate path_attr_length fits in remaining body
+    //Used so far: 2 + withdrawn_route_length + 2 = 4 + withdrawn_route_length
+    uint32_t used = 4 + message->update->withdrawn_route_length;
+    if (message->update->path_attr_length > message->body_length - used) {
+        free(message->update);
+        return -1;
+    }
+
     if (message->update->path_attr_length > 0) {
         unsigned char *pa_start = pos;
         struct bgp_path_attribute *attr;
@@ -595,13 +627,21 @@ int parse_update(struct bgp_msg *message, unsigned char *body) {
         }
     }
 
-    //NLRI information - 23 is the header, type and length fields
-    //TODO: length validation
-    int nlri_length = message->length - (23 + message->update->withdrawn_route_length + message->update->path_attr_length);
+    //NLRI information - remaining bytes after withdrawn routes and path attributes
+    //body_length - 4 (length fields) - withdrawn_route_length - path_attr_length
+    uint32_t total_used = 4 + message->update->withdrawn_route_length + message->update->path_attr_length;
+    if (total_used > message->body_length) {
+        free(message->update);
+        return -1;
+    }
+    uint16_t nlri_length = message->body_length - (uint16_t)total_used;
     unsigned char *nlri_end = pos + nlri_length;
 
     while (pos < nlri_end) {
         nlri = parse_ipv4_nlri(&pos);
+        if (!nlri) {
+            break;
+        }
         list_add_tail(&nlri->list, &message->update->nlri);
     }
 

@@ -62,12 +62,12 @@ int print_msg_stdout(struct bgp_peer *peer, struct bgp_msg *msg) {
         &print_routerefresh,
     };
 
-    if (msg->type > 4) {
+    //Valid BGP message types are 1-5 (OPEN through ROUTE_REFRESH)
+    if (msg->type < 1 || msg->type > 5) {
         return -1;
     }
 
-
-    printf("recv_time=%ld name=%s id=%ld type=%s length=%d ", msg->recv_time, msg->peer_name, msg->id, type_string[ msg->type ],  msg->length); 
+    printf("recv_time=%ld name=%s id=%ld type=%s length=%d ", msg->recv_time, msg->peer_name, msg->id, type_string[ msg->type ],  msg->length);
     dispatch[msg->type - 1](msg);
 
     return 0;
@@ -75,8 +75,7 @@ int print_msg_stdout(struct bgp_peer *peer, struct bgp_msg *msg) {
 
 
 void initialise_output(struct bgp_peer *peer) {
-    pthread_mutex_lock(&peer->stdout_lock);
-
+    //No lock needed - called during peer init before thread starts
     peer->print_msg = print_msg_stdout;
 }
 
@@ -201,6 +200,9 @@ void print_atomic_aggregate(struct bgp_path_attribute *pa) {
 }
 
 void print_aggregator(struct bgp_path_attribute *pa) {
+    if (!pa->aggregator) {
+        return;
+    }
     printf("aggregator_asn=%d ", pa->aggregator->asn);
     printf("aggregator_ip=");
     print_ipv4(pa->aggregator->ip);
@@ -304,6 +306,11 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
         &construct_json_routerefresh,
     };
 
+    //Valid BGP message types are 1-5 (OPEN through ROUTE_REFRESH)
+    if (msg->type < 1 || msg->type > 5) {
+        return -1;
+    }
+
     json_t *root = json_object();
 
     json_object_set_new( root, "recv_time", json_integer(msg->recv_time) );
@@ -311,11 +318,6 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
     json_object_set_new( root, "id", json_integer(msg->id) );
     json_object_set_new( root, "type", json_string(type_string[ msg->type ]) );
     json_object_set_new( root, "length", json_integer(msg->length) );
-
-
-    if (msg->type > 4) {
-        return -1;
-    }
 
     json_object_set_new( root, "message", dispatch[msg->type - 1](msg) );
 
@@ -504,6 +506,11 @@ json_t *construct_json_atomic_aggregate(struct bgp_path_attribute *attr) {
 
 json_t *construct_json_aggregator(struct bgp_path_attribute *attr) {
     json_t *aggregator = json_object();
+
+    if (!attr->aggregator) {
+        return aggregator;
+    }
+
     char *agg_ip_str = ipv4_string(attr->aggregator->ip);
 
     json_object_set_new( aggregator, "aggregator_asn", json_integer(attr->aggregator->asn) );
