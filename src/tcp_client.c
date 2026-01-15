@@ -11,8 +11,12 @@
 #include "sds.h"
 
 
+// GCC analyzer incorrectly thinks connect() after bind() is invalid.
+// bind() before connect() is valid for TCP clients (sets source address).
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-phase-mismatch"
 int tcp_connect(sds host, const char *port, sds source) {
-    int sock_fd, ret;
+    int sock_fd = -1, ret;
     struct addrinfo hints, *result, *result_head;
 
     bzero(&hints, sizeof(hints));
@@ -55,6 +59,8 @@ int tcp_connect(sds host, const char *port, sds source) {
 
             if ( (ret = getaddrinfo(source, NULL, &shints, &sres)) ) {
                 log_print(LOG_WARN, "Could not get source IP info %s (%d)\n", source, ret);
+                close(sock_fd);
+                sock_fd = -1;
                 break;
             }
 
@@ -80,14 +86,16 @@ int tcp_connect(sds host, const char *port, sds source) {
             break;
         }
         close(sock_fd);
+        sock_fd = -1;
     } while ((result = result->ai_next) != NULL);
 
     freeaddrinfo(result_head);
 
-    if (result == NULL) {
+    if (sock_fd < 0) {
         log_print(LOG_ERROR, "Unable to connect to %s\n", host);
         return -1;
     }
 
     return sock_fd;
 }
+#pragma GCC diagnostic pop

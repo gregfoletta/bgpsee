@@ -55,12 +55,13 @@ sds log_prefix(enum LOG_LEVEL level) {
 
     switch (level) {
         case LOG_NONE:
+            prefix = sdsempty();
             break;
         case LOG_ERROR:
             //Bold Red
             prefix = sdsnew("\033[1;31m- ");
             break;
-        case LOG_WARN: 
+        case LOG_WARN:
             //Bold Yellow
             prefix = sdsnew("\033[1;33m- ");
             break;
@@ -72,7 +73,10 @@ sds log_prefix(enum LOG_LEVEL level) {
             //Bold Blue then reset
             prefix = sdsnew("\033[1;36m+ \033[0;m");
             break;
-    };
+        default:
+            prefix = sdsempty();
+            break;
+    }
 
     return prefix;
 }

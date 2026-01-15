@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
         int bgp_peer_id;
         //Split the peer into IP:ASN
         sds *tokens;
-        sds peer_name;
+        sds peer_name = NULL;
         int n_tokens;
 
         sds peer_arg = sdsnew(argv[x]);

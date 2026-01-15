@@ -5,8 +5,8 @@
 
 #include "list.h"
 
-//Including NULL
-#define MAX_IPV4_ROUTE_STRING 18 + 1
+// Max IPv4 CIDR string: "255.255.255.255/32" (18 chars) + null
+#define MAX_IPV4_ROUTE_STRING 20
 
 enum bgp_msg_type {
     OPEN = 1,

@@ -1,4 +1,5 @@
 #include "raw_socket.h"
+#include <unistd.h>
 
 
 int raw_sock_create(void) {
@@ -26,15 +27,18 @@ int raw_sock_connect(const char *host) {
 
     if ((ret = getaddrinfo(host, NULL, NULL, &result)) < 0) {
         DEBUG_PRINT("Could not getaddrinfo() for raw socket\n");
+        close(fd);
         return -1;
     }
 
     if (connect(fd, result->ai_addr, result->ai_addrlen) < 0) {
         DEBUG_PRINT("Unable to connect to raw socket on %s\n", host);
         freeaddrinfo(result);
+        close(fd);
         return -1;
     }
 
+    freeaddrinfo(result);
     return fd;
 }
 

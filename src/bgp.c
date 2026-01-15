@@ -390,7 +390,7 @@ void *bgp_peer_thread(void *param) {
 
     log_print(LOG_DEBUG, "RW Thread Active\n");
 
-    set = calloc(sizeof(*set), 1);
+    set = calloc(1, sizeof(*set));
 
     if (!set) {
         log_print(LOG_DEBUG, "Unable to allocate space for FD_SET\n");
