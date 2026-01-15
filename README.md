@@ -10,13 +10,13 @@ BGPSee is a multi-threaded BGP client for the CLI. It's goal it to allow you to 
 
 # Version
 
-Current version is **0.0.4**
+Current version is **0.0.5**
 
-Major changes from **0.0.3** to **0.0.4**:
-- Security fixes for BGP message parsing (bounds checking, input validation)
-- Fixed byte conversion functions and memory leaks
-- Added test suite (`make test`)
-- Separate debug and release builds (`make` vs `make debug`) 
+Major changes from **0.0.4** to **0.0.5**:
+- Graceful shutdown with NOTIFICATION messages (CEASE/Administrative Shutdown)
+- NOTIFICATION sent on OPEN validation errors (bad peer ASN, version mismatch)
+- NOTIFICATION sent on hold timer expiry
+- Added 21 new tests for NOTIFICATION functionality 
 
 Seee the [CHANGELOG](CHANGELOG.md) for further information.
 

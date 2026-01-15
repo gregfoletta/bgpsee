@@ -446,6 +446,128 @@ void test_update_invalid_withdrawn_length(void) {
     }
 }
 
+void test_send_notification(void) {
+    test_section("send_notification function");
+
+    int fds[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) {
+        test_cond("Created socket pair for send_notification", 0);
+        return;
+    }
+    test_cond("Created socket pair for send_notification", 1);
+
+    // Send a CEASE/Administrative Shutdown notification
+    ssize_t sent = send_notification(fds[1], BGP_ERR_CEASE, BGP_ERR_CEASE_ADMIN_SHUT);
+    test_cond("send_notification returns 21 bytes", sent == 21);
+
+    // Read and verify the message
+    unsigned char buf[21];
+    ssize_t received = recv(fds[0], buf, sizeof(buf), MSG_WAITALL);
+    test_cond("Received 21 bytes", received == 21);
+
+    // Verify marker (16 bytes of 0xFF)
+    int marker_ok = 1;
+    for (int i = 0; i < 16; i++) {
+        if (buf[i] != 0xFF) {
+            marker_ok = 0;
+            break;
+        }
+    }
+    test_cond("NOTIFICATION marker is correct", marker_ok);
+
+    // Verify length (bytes 16-17, big-endian)
+    uint16_t length = ((uint16_t)buf[16] << 8) | buf[17];
+    test_cond("NOTIFICATION length is 21", length == 21);
+
+    // Verify type (byte 18)
+    test_cond("NOTIFICATION type is 3", buf[18] == NOTIFICATION);
+
+    // Verify error code (byte 19)
+    test_cond("NOTIFICATION error code is 6 (CEASE)", buf[19] == BGP_ERR_CEASE);
+
+    // Verify subcode (byte 20)
+    test_cond("NOTIFICATION subcode is 2 (ADMIN_SHUT)", buf[20] == BGP_ERR_CEASE_ADMIN_SHUT);
+
+    close(fds[0]);
+    close(fds[1]);
+}
+
+void test_send_notification_hold_timer(void) {
+    test_section("send_notification for Hold Timer Expired");
+
+    int fds[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) {
+        test_cond("Created socket pair", 0);
+        return;
+    }
+    test_cond("Created socket pair", 1);
+
+    // Send Hold Timer Expired notification
+    ssize_t sent = send_notification(fds[1], BGP_ERR_HOLD_TIMER, 0);
+    test_cond("send_notification returns 21 bytes", sent == 21);
+
+    unsigned char buf[21];
+    recv(fds[0], buf, sizeof(buf), MSG_WAITALL);
+
+    test_cond("Error code is 4 (Hold Timer Expired)", buf[19] == BGP_ERR_HOLD_TIMER);
+    test_cond("Subcode is 0", buf[20] == 0);
+
+    close(fds[0]);
+    close(fds[1]);
+}
+
+void test_send_notification_bad_peer_as(void) {
+    test_section("send_notification for Bad Peer AS");
+
+    int fds[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) {
+        test_cond("Created socket pair", 0);
+        return;
+    }
+    test_cond("Created socket pair", 1);
+
+    // Send OPEN error - Bad Peer AS
+    ssize_t sent = send_notification(fds[1], BGP_ERR_OPEN, BGP_ERR_OPEN_PEER_AS);
+    test_cond("send_notification returns 21 bytes", sent == 21);
+
+    unsigned char buf[21];
+    recv(fds[0], buf, sizeof(buf), MSG_WAITALL);
+
+    test_cond("Error code is 2 (OPEN Message Error)", buf[19] == BGP_ERR_OPEN);
+    test_cond("Subcode is 2 (Bad Peer AS)", buf[20] == BGP_ERR_OPEN_PEER_AS);
+
+    close(fds[0]);
+    close(fds[1]);
+}
+
+void test_notification_round_trip(void) {
+    test_section("NOTIFICATION send and parse round trip");
+
+    int fds[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) {
+        test_cond("Created socket pair", 0);
+        return;
+    }
+    test_cond("Created socket pair", 1);
+
+    // Send a NOTIFICATION
+    send_notification(fds[1], BGP_ERR_CEASE, BGP_ERR_CEASE_PEER_DECONF);
+    close(fds[1]);  // Close write end so recv_msg gets EOF after data
+
+    // Parse it with recv_msg
+    struct bgp_msg *parsed = recv_msg(fds[0]);
+    close(fds[0]);
+
+    test_cond("recv_msg parses sent NOTIFICATION", parsed != NULL);
+
+    if (parsed) {
+        test_cond("Parsed type is NOTIFICATION", parsed->type == NOTIFICATION);
+        test_cond("Parsed error code is CEASE", parsed->notification.code == BGP_ERR_CEASE);
+        test_cond("Parsed subcode is PEER_DECONF", parsed->notification.subcode == BGP_ERR_CEASE_PEER_DECONF);
+        free_msg(parsed);
+    }
+}
+
 void test_nlri_invalid_prefix_length(void) {
     test_section("UPDATE with invalid NLRI prefix length");
 
@@ -506,6 +628,12 @@ int main(void) {
     test_invalid_message_type();
     test_update_invalid_withdrawn_length();
     test_nlri_invalid_prefix_length();
+
+    // NOTIFICATION send tests
+    test_send_notification();
+    test_send_notification_hold_timer();
+    test_send_notification_bad_peer_as();
+    test_notification_round_trip();
 
     test_report();
 }

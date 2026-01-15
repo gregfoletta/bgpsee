@@ -112,6 +112,44 @@ struct bgp_update {
 };
 
 
+/*
+ * BGP NOTIFICATION Error Codes and Subcodes (RFC 4271, RFC 4486)
+ */
+
+// Error Code 1: Message Header Error
+#define BGP_ERR_HEADER              1
+#define BGP_ERR_HEADER_SYNC         1  // Connection Not Synchronized (bad marker)
+#define BGP_ERR_HEADER_LENGTH       2  // Bad Message Length
+#define BGP_ERR_HEADER_TYPE         3  // Bad Message Type
+
+// Error Code 2: OPEN Message Error
+#define BGP_ERR_OPEN                2
+#define BGP_ERR_OPEN_VERSION        1  // Unsupported Version Number
+#define BGP_ERR_OPEN_PEER_AS        2  // Bad Peer AS
+#define BGP_ERR_OPEN_BGP_ID         3  // Bad BGP Identifier
+#define BGP_ERR_OPEN_OPT_PARAM      4  // Unsupported Optional Parameter
+#define BGP_ERR_OPEN_HOLD_TIME      6  // Unacceptable Hold Time
+
+// Error Code 3: UPDATE Message Error
+#define BGP_ERR_UPDATE              3
+
+// Error Code 4: Hold Timer Expired
+#define BGP_ERR_HOLD_TIMER          4
+
+// Error Code 5: Finite State Machine Error
+#define BGP_ERR_FSM                 5
+
+// Error Code 6: Cease (RFC 4486)
+#define BGP_ERR_CEASE               6
+#define BGP_ERR_CEASE_MAX_PREFIX    1  // Maximum Number of Prefixes Reached
+#define BGP_ERR_CEASE_ADMIN_SHUT    2  // Administrative Shutdown
+#define BGP_ERR_CEASE_PEER_DECONF   3  // Peer De-configured
+#define BGP_ERR_CEASE_ADMIN_RESET   4  // Administrative Reset
+#define BGP_ERR_CEASE_CONN_REJECT   5  // Connection Rejected
+#define BGP_ERR_CEASE_CONFIG_CHG    6  // Other Configuration Change
+#define BGP_ERR_CEASE_COLLISION     7  // Connection Collision Resolution
+#define BGP_ERR_CEASE_RESOURCES     8  // Out of Resources
+
 struct bgp_notification {
     uint8_t code;
     uint8_t subcode;
@@ -147,4 +185,5 @@ struct bgp_msg *recv_msg(int socket_fd);
 int free_msg(struct bgp_msg *);
 ssize_t send_open(int, uint8_t, uint16_t, uint16_t, uint32_t);
 ssize_t send_keepalive(int);
+ssize_t send_notification(int fd, uint8_t code, uint8_t subcode);
 

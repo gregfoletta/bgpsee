@@ -689,6 +689,23 @@ ssize_t send_keepalive(int fd) {
     return send(fd, message_buffer, BGP_HEADER_LENGTH, 0);
 }
 
+#define BGP_NOTIFICATION_HEADER_LENGTH (BGP_HEADER_LENGTH + 2)
+
+ssize_t send_notification(int fd, uint8_t code, uint8_t subcode) {
+    unsigned char message_buffer[BGP_NOTIFICATION_HEADER_LENGTH];
+    unsigned char *pos;
+
+    create_header(BGP_NOTIFICATION_HEADER_LENGTH, NOTIFICATION, message_buffer);
+
+    pos = message_buffer + BGP_HEADER_LENGTH;
+    uint8_to_uchar_inc(&pos, code);
+    uint8_to_uchar_inc(&pos, subcode);
+
+    log_print(LOG_DEBUG, "Sending NOTIFICATION: code=%d, subcode=%d\n", code, subcode);
+
+    return send(fd, message_buffer, BGP_NOTIFICATION_HEADER_LENGTH, 0);
+}
+
 int parse_route_refresh(struct bgp_msg *message) {
     return 0;
 

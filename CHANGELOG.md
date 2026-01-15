@@ -1,4 +1,12 @@
 # Change Log
+- 0.0.5
+    - Graceful shutdown: sends NOTIFICATION on peer deactivation (CEASE/Administrative Shutdown)
+    - NOTIFICATION sent on OPEN validation errors (bad peer ASN, version mismatch, invalid hold time)
+    - NOTIFICATION sent on hold timer expiry in all applicable FSM states
+    - Added BGP NOTIFICATION error codes (RFC 4271, RFC 4486)
+    - Added send_notification() function
+    - Added 21 new tests for NOTIFICATION functionality (73 total)
+
 - 0.0.4
     - Security fixes for BGP message parsing (bounds checking, input validation)
     - Fixed byte conversion functions (uint32/uint64 big-endian)

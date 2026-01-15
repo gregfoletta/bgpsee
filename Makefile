@@ -34,10 +34,10 @@ all: $(BIN)
 debug: $(BIN)-debug
 
 $(BIN): $(OBJ)
-	$(CC) $(LDFLAGS) $^ -o $@
+	$(CC) $^ $(LDFLAGS) -o $@
 
 $(BIN)-debug: $(OBJ_DEBUG)
-	$(CC) $(DEBUG_LDFLAGS) $^ -o $(BIN)
+	$(CC) $^ $(DEBUG_LDFLAGS) -o $(BIN)
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
