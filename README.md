@@ -1,12 +1,23 @@
 # BGPSee
 
-![Build Tests](https://github.com/gregfoletta/bgpsee/actions/workflows/make.yml/badge.svg)
+[![Build](https://github.com/gregfoletta/bgpsee/actions/workflows/make.yml/badge.svg)](https://github.com/gregfoletta/bgpsee/actions/workflows/make.yml)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Language: C](https://img.shields.io/badge/Language-C-orange.svg)](https://en.wikipedia.org/wiki/C_(programming_language))
+[![Platform: Linux](https://img.shields.io/badge/Platform-Linux-lightgrey.svg)](https://www.linux.org/)
 
 <p align="center">
   <img src="https://github.com/gregfoletta/bgpsee/blob/master/img/logo.png"/>
 </p>
 
-BGPSee is a multi-threaded BGP client for the CLI. It's goal it to allow you to quickly and easily view the BGP paths that a peer or peers are advertising. Previously you would have had to either spin-up a virtual routers, or use a Linux routing daemon (FRR, Zebra, etc) to view this information.
+BGPSee is a multi-threaded BGP client for the CLI. Its goal is to allow you to quickly and easily view the BGP paths that a peer or peers are advertising. Previously you would have had to either spin up virtual routers, or use a Linux routing daemon (FRR, Zebra, etc) to view this information.
+
+## Features
+
+- **Multi-peer support** - Connect to multiple BGP peers simultaneously, each in its own thread
+- **JSON output** - Structured JSON output for easy parsing and integration with other tools
+- **RFC compliant** - Proper BGP FSM implementation with NOTIFICATION support for error handling
+- **Graceful shutdown** - Sends proper CEASE notifications when disconnecting
+- **Lightweight** - No heavy dependencies, just libjansson for JSON support
 
 # Version
 
@@ -18,7 +29,7 @@ Major changes from **0.0.4** to **0.0.5**:
 - NOTIFICATION sent on hold timer expiry
 - Added 21 new tests for NOTIFICATION functionality 
 
-Seee the [CHANGELOG](CHANGELOG.md) for further information.
+See the [CHANGELOG](CHANGELOG.md) for further information.
 
 Versions < 0.1.0 are considered beta version of bgpsee. There may be rough edges, and the CLI interface is subject to major changes between versions. Use `make debug` to compile with debug symbols and sanitizers for development. If bgpsee crashes, I would ask you to please raise an issue and copy/paste the crash output into the issue.
 
@@ -137,6 +148,34 @@ make
 ```
 
 This builds a *bgpsee* executable in the root directory. There is no make install.
+
+## Testing
+
+Run the test suite with:
+```bash
+make test
+```
+
+This runs 73 tests covering:
+- Byte conversion functions (big-endian network byte order)
+- BGP message parsing (OPEN, UPDATE, KEEPALIVE, NOTIFICATION)
+- NOTIFICATION message generation
+- Invalid input handling (security tests)
+
+For development, use the debug build which includes AddressSanitizer and UndefinedBehaviorSanitizer:
+```bash
+make debug
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run `make test` to ensure all tests pass
+5. Submit a pull request
+
+Please report bugs and crashes by [opening an issue](https://github.com/gregfoletta/bgpsee/issues).
 
 # Roadmap
 

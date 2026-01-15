@@ -1,4 +1,4 @@
-name: Build Tests
+name: Build and Test
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-
+    name: Build
     runs-on: ubuntu-latest
 
     steps:
@@ -17,11 +17,28 @@ jobs:
       with:
         submodules: true
 
-    - name: Install jansson
-      run: sudo apt-get install libjansson-dev
-      
-    - name: Run make
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y libjansson-dev
+
+    - name: Build release
       run: make
 
-    - name: Run make clean
-      run: make clean
+    - name: Build debug
+      run: make clean && make debug
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+    - name: Checkout repo and submodules
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y libjansson-dev
+
+    - name: Run tests
+      run: make test
