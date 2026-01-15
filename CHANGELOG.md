@@ -1,4 +1,11 @@
 # Change Log
+- 0.0.4
+    - Security fixes for BGP message parsing (bounds checking, input validation)
+    - Fixed byte conversion functions (uint32/uint64 big-endian)
+    - Fixed memory leaks in error paths
+    - Added test suite (make test)
+    - Separate debug and release builds (make vs make debug)
+
 - 0.0.3
     - Supports JSON as an output format
     - JSON becomes default output format
