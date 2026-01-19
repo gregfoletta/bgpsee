@@ -48,7 +48,7 @@ struct bgp_msg *create_bgp_open(struct bgp_peer *peer);
 // Wrapper functions for queuing and sending messages
 ssize_t queue_and_send_open(struct bgp_peer *peer, uint8_t version, uint16_t asn,
                             uint16_t hold_time, uint32_t router_id,
-                            const struct bgp_capabilities *caps);
+                            struct bgp_capabilities *caps);
 ssize_t queue_and_send_keepalive(struct bgp_peer *peer);
 ssize_t queue_and_send_notification(struct bgp_peer *peer, uint8_t code, uint8_t subcode);
 
@@ -563,9 +563,8 @@ int fsm_state_connect(struct bgp_peer *peer) {
 
     //TODO: fix hold timer
     log_print(LOG_DEBUG, "Sending OPEN to peer %s\n", peer->name);
+    /* Note: caps ownership transfers to the queued message, freed by free_msg() */
     queue_and_send_open(peer, *peer->version, *peer->local_asn, 30, *peer->local_rid, caps);
-
-    bgp_capabilities_free(caps);
 
     start_timer(peer->local_timers, HoldTimer);
     peer->fsm_state = OPENSENT;
@@ -740,7 +739,7 @@ int fsm_state_established(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
 
 ssize_t queue_and_send_open(struct bgp_peer *peer, uint8_t version, uint16_t asn,
                             uint16_t hold_time, uint32_t router_id,
-                            const struct bgp_capabilities *caps) {
+                            struct bgp_capabilities *caps) {
     struct bgp_msg *msg = alloc_sent_msg();
 
     if (msg) {
@@ -752,7 +751,9 @@ ssize_t queue_and_send_open(struct bgp_peer *peer, uint8_t version, uint16_t asn
         msg->open.asn = asn;
         msg->open.hold_time = hold_time;
         msg->open.router_id = router_id;
-        msg->open.opt_param_len = 0;  // Simplified - actual caps encoded in send_open
+        /* Store capabilities - takes ownership, will be freed by free_msg() */
+        msg->open.capabilities = caps;
+        msg->open.opt_param_len = caps ? (uint8_t)(caps->total_length + 2) : 0;
         list_add_tail(&msg->output, &peer->output_q);
     }
 
