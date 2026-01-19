@@ -43,6 +43,7 @@ struct bgp_peer_timers {
 
 struct bgp_stats {
     int total;
+    int sent_total;  // Counter for sent messages (used for negative IDs)
     int open[2];
     int update[2];
     int notification[2];

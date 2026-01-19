@@ -45,6 +45,13 @@ int fsm_state_established(struct bgp_peer *, struct bgp_msg *, fd_set *);
 
 struct bgp_msg *create_bgp_open(struct bgp_peer *peer);
 
+// Wrapper functions for queuing and sending messages
+ssize_t queue_and_send_open(struct bgp_peer *peer, uint8_t version, uint16_t asn,
+                            uint16_t hold_time, uint32_t router_id,
+                            const struct bgp_capabilities *caps);
+ssize_t queue_and_send_keepalive(struct bgp_peer *peer);
+ssize_t queue_and_send_notification(struct bgp_peer *peer, uint8_t code, uint8_t subcode);
+
 //End Non-public functions
 
 
@@ -479,7 +486,8 @@ void *bgp_peer_thread(void *param) {
     //Graceful shutdown: send CEASE notification if socket is still open
     if (peer->socket.fd >= 0) {
         log_print(LOG_INFO, "Sending graceful shutdown to peer %s\n", peer->name);
-        send_notification(peer->socket.fd, BGP_ERR_CEASE, BGP_ERR_CEASE_ADMIN_SHUT);
+        queue_and_send_notification(peer, BGP_ERR_CEASE, BGP_ERR_CEASE_ADMIN_SHUT);
+        print_bgp_msg_and_gc(peer);  // Print the notification before closing
         bgp_close_socket(peer);
     }
 
@@ -554,7 +562,7 @@ int fsm_state_connect(struct bgp_peer *peer) {
 
     //TODO: fix hold timer
     log_print(LOG_DEBUG, "Sending OPEN to peer %s\n", peer->name);
-    send_open(peer->socket.fd, *peer->version, *peer->local_asn, 30, *peer->local_rid, caps);
+    queue_and_send_open(peer, *peer->version, *peer->local_asn, 30, *peer->local_rid, caps);
 
     bgp_capabilities_free(caps);
 
@@ -578,7 +586,7 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
     //Did the hold timer expire?
     if( which_timer_fired(peer->local_timers, set) == HoldTimer ) {
         log_print(LOG_WARN, "HoldTimer expired in OPENSENT for peer %s\n", peer->name);
-        send_notification(peer->socket.fd, BGP_ERR_HOLD_TIMER, 0);
+        queue_and_send_notification(peer, BGP_ERR_HOLD_TIMER, 0);
         peer->connect_retry_counter++;
         disarm_timer(peer->local_timers, ConnectRetryTimer);
         bgp_close_socket(peer);
@@ -598,7 +606,7 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
             if (message->open.asn != peer->peer_asn) {
                 log_print(LOG_WARN, "Peer %s ASN mismatch: expected %d, got %d\n",
                     peer->name, peer->peer_asn, message->open.asn);
-                send_notification(peer->socket.fd, BGP_ERR_OPEN, BGP_ERR_OPEN_PEER_AS);
+                queue_and_send_notification(peer, BGP_ERR_OPEN, BGP_ERR_OPEN_PEER_AS);
                 bgp_close_socket(peer);
                 peer->fsm_state = IDLE;
                 return -1;
@@ -608,7 +616,7 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
             if (message->open.version != *peer->version) {
                 log_print(LOG_WARN, "Peer %s version mismatch: expected %d, got %d\n",
                     peer->name, *peer->version, message->open.version);
-                send_notification(peer->socket.fd, BGP_ERR_OPEN, BGP_ERR_OPEN_VERSION);
+                queue_and_send_notification(peer, BGP_ERR_OPEN, BGP_ERR_OPEN_VERSION);
                 bgp_close_socket(peer);
                 peer->fsm_state = IDLE;
                 return -1;
@@ -618,7 +626,7 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
             if (message->open.hold_time != 0 && message->open.hold_time < 3) {
                 log_print(LOG_WARN, "Peer %s unacceptable hold time: %d\n",
                     peer->name, message->open.hold_time);
-                send_notification(peer->socket.fd, BGP_ERR_OPEN, BGP_ERR_OPEN_HOLD_TIME);
+                queue_and_send_notification(peer, BGP_ERR_OPEN, BGP_ERR_OPEN_HOLD_TIME);
                 bgp_close_socket(peer);
                 peer->fsm_state = IDLE;
                 return -1;
@@ -629,7 +637,7 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
 
             //Sending a keepalive
             log_print(LOG_DEBUG, "Sending keepalive\n");
-            send_keepalive(peer->socket.fd);
+            queue_and_send_keepalive(peer);
             start_timer_recurring(peer->local_timers, KeepaliveTimer);
             peer->fsm_state = OPENCONFIRM;
             return 0;
@@ -651,7 +659,7 @@ int fsm_state_openconfirm(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
     //Did the hold timer expire?
     if( which_timer_fired(peer->local_timers, set) == HoldTimer ) {
         log_print(LOG_WARN, "HoldTimer expired in OPENCONFIRM for peer %s\n", peer->name);
-        send_notification(peer->socket.fd, BGP_ERR_HOLD_TIMER, 0);
+        queue_and_send_notification(peer, BGP_ERR_HOLD_TIMER, 0);
         bgp_close_socket(peer);
         peer->fsm_state = IDLE;
         return -1;
@@ -660,7 +668,7 @@ int fsm_state_openconfirm(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
     //If the Keepalive timer has fired, send a keepalive
     if ( timer_has_fired(peer->local_timers, KeepaliveTimer, set) ) {
         log_print(LOG_DEBUG, "Keepalive timer fired in OPENCONFIRM, sending KEEPALIVE\n");
-        send_keepalive(peer->socket.fd);
+        queue_and_send_keepalive(peer);
     }
 
     message = pop_ingress_queue(peer);
@@ -689,7 +697,7 @@ int fsm_state_established(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
     //Did the hold timer expire?
     if( which_timer_fired(peer->local_timers, set) == HoldTimer ) {
         log_print(LOG_WARN, "HoldTimer expired in ESTABLISHED for peer %s\n", peer->name);
-        send_notification(peer->socket.fd, BGP_ERR_HOLD_TIMER, 0);
+        queue_and_send_notification(peer, BGP_ERR_HOLD_TIMER, 0);
         bgp_close_socket(peer);
         peer->fsm_state = IDLE;
         return -1;
@@ -698,7 +706,7 @@ int fsm_state_established(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
     //If the Keepalive timer has fired, send a keepalive
     if ( timer_has_fired(peer->local_timers, KeepaliveTimer, set) ) {
         log_print(LOG_DEBUG, "Keepalive timer fired, sending KEEPALIVE\n");
-        send_keepalive(peer->socket.fd);
+        queue_and_send_keepalive(peer);
     }
 
     message = pop_ingress_queue(peer);
@@ -723,5 +731,61 @@ int fsm_state_established(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
     }
 
     return 0;
+}
+
+/*
+    Wrapper functions for queuing and sending messages
+*/
+
+ssize_t queue_and_send_open(struct bgp_peer *peer, uint8_t version, uint16_t asn,
+                            uint16_t hold_time, uint32_t router_id,
+                            const struct bgp_capabilities *caps) {
+    struct bgp_msg *msg = alloc_sent_msg();
+
+    if (msg) {
+        msg->id = -(++peer->stats.sent_total);
+        msg->peer_name = peer->name;
+        msg->type = OPEN;
+        msg->length = 29;  // BGP header (19) + OPEN minimum (10)
+        msg->open.version = version;
+        msg->open.asn = asn;
+        msg->open.hold_time = hold_time;
+        msg->open.router_id = router_id;
+        msg->open.opt_param_len = 0;  // Simplified - actual caps encoded in send_open
+        list_add_tail(&msg->output, &peer->output_q);
+    }
+
+    return send_open(peer->socket.fd, version, asn, hold_time, router_id, caps);
+}
+
+ssize_t queue_and_send_keepalive(struct bgp_peer *peer) {
+    struct bgp_msg *msg = alloc_sent_msg();
+
+    if (msg) {
+        msg->id = -(++peer->stats.sent_total);
+        msg->peer_name = peer->name;
+        msg->type = KEEPALIVE;
+        msg->length = 19;  // BGP header only
+        list_add_tail(&msg->output, &peer->output_q);
+    }
+
+    return send_keepalive(peer->socket.fd);
+}
+
+ssize_t queue_and_send_notification(struct bgp_peer *peer, uint8_t code, uint8_t subcode) {
+    struct bgp_msg *msg = alloc_sent_msg();
+
+    if (msg) {
+        msg->id = -(++peer->stats.sent_total);
+        msg->peer_name = peer->name;
+        msg->type = NOTIFICATION;
+        msg->length = 21;  // BGP header (19) + code (1) + subcode (1)
+        msg->notification.code = code;
+        msg->notification.subcode = subcode;
+        msg->notification.data = NULL;
+        list_add_tail(&msg->output, &peer->output_q);
+    }
+
+    return send_notification(peer->socket.fd, code, subcode);
 }
 

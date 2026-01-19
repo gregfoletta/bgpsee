@@ -67,7 +67,7 @@ int print_msg_stdout(struct bgp_peer *peer, struct bgp_msg *msg) {
         return -1;
     }
 
-    printf("recv_time=%ld name=%s id=%ld type=%s length=%d ", msg->recv_time, msg->peer_name, msg->id, type_string[ msg->type ],  msg->length);
+    printf("time=%ld name=%s id=%ld type=%s length=%d ", msg->recv_time, msg->peer_name, msg->id, type_string[ msg->type ],  msg->length);
     dispatch[msg->type - 1](msg);
 
     return 0;
@@ -313,7 +313,7 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
 
     json_t *root = json_object();
 
-    json_object_set_new( root, "recv_time", json_integer(msg->recv_time) );
+    json_object_set_new( root, "time", json_integer(msg->recv_time) );
     json_object_set_new( root, "peer_name", json_string(msg->peer_name) );
     json_object_set_new( root, "id", json_integer(msg->id) );
     json_object_set_new( root, "type", json_string(type_string[ msg->type ]) );

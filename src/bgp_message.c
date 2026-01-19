@@ -172,6 +172,23 @@ exit:
     return message;
 }
 
+struct bgp_msg *alloc_sent_msg(void) {
+    struct bgp_msg *message;
+
+    message = calloc(1, sizeof(*message));
+
+    if (!message) {
+        return NULL;
+    }
+
+    INIT_LIST_HEAD(&message->ingress);
+    INIT_LIST_HEAD(&message->output);
+    message->actioned = 1;  // No FSM processing needed for sent messages
+    message->recv_time = time(NULL);
+
+    return message;
+}
+
 int free_update(struct bgp_update *);
 int free_path_attributes(struct bgp_update *);
 int free_as_path(struct bgp_path_attribute *);

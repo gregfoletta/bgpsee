@@ -185,6 +185,7 @@ struct bgp_msg {
 
 
 struct bgp_msg *recv_msg(int socket_fd);
+struct bgp_msg *alloc_sent_msg(void);
 int free_msg(struct bgp_msg *);
 ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time,
                   uint32_t router_id, const struct bgp_capabilities *caps);
