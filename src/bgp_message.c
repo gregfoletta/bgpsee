@@ -196,6 +196,9 @@ int free_aggregator(struct bgp_path_attribute *);
 
 int free_msg(struct bgp_msg *message) {
     switch (message->type) {
+        case OPEN:
+            bgp_capabilities_free(message->open.capabilities);
+            break;
         case UPDATE:
             free_update(message->update);
             break;
@@ -356,8 +359,9 @@ int parse_open(struct bgp_msg *message, unsigned char *body) {
         message->open.router_id,
         message->open.opt_param_len
     );
-        
-    //TODO: OPEN message checks
+
+    /* Parse optional parameters (capabilities) */
+    message->open.capabilities = bgp_capabilities_parse(body, message->open.opt_param_len);
 
     return 0;
 }

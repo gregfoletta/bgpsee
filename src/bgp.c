@@ -174,6 +174,7 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     peer->peer_asn = peer_asn;
 
     //Init the stdout lock and the output function
+    pthread_mutex_init(&peer->stdout_lock, NULL);
     initialise_output(peer);
 
     //Init message queue
@@ -370,9 +371,9 @@ void print_bgp_msg_and_gc(struct bgp_peer *peer) {
 
     list_for_each_safe(i, tmp, &peer->output_q) {
         msg = list_entry(i, struct bgp_msg, output);
-        //Don't print of the message hasn't been actioned yet
+        //Don't print if the message hasn't been actioned yet
         if (!msg->actioned) {
-            return;
+            break;
         }
         peer->print_msg(peer, msg);
         list_del(i);

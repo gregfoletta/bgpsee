@@ -111,3 +111,18 @@ int bgp_capabilities_add_mp_ext(struct bgp_capabilities *caps,
  */
 int bgp_capabilities_encode(const struct bgp_capabilities *caps,
                             unsigned char *buf, size_t buf_size);
+
+/*
+ * Parse capabilities from OPEN message optional parameters
+ * Returns a new bgp_capabilities structure, or NULL on error
+ * The opt_params buffer should point to the start of optional parameters
+ * opt_param_len is the total length of all optional parameters
+ */
+struct bgp_capabilities *bgp_capabilities_parse(const unsigned char *opt_params,
+                                                 uint8_t opt_param_len);
+
+/*
+ * Get capability name string from code
+ * Returns a static string describing the capability
+ */
+const char *bgp_capability_name(uint8_t code);

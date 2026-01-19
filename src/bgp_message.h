@@ -27,7 +27,7 @@ struct bgp_open {
     uint16_t hold_time;
     uint32_t router_id;
     uint8_t opt_param_len;
-    struct bgp_msg_open_param *opt_params;
+    struct bgp_capabilities *capabilities;  // Parsed capabilities from optional params
 };
 
 /*

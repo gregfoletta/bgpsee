@@ -140,3 +140,94 @@ int bgp_capabilities_encode(const struct bgp_capabilities *caps,
 
     return (int)(ptr - buf);
 }
+
+struct bgp_capabilities *bgp_capabilities_parse(const unsigned char *opt_params,
+                                                 uint8_t opt_param_len) {
+    struct bgp_capabilities *caps;
+    const unsigned char *ptr;
+    const unsigned char *end;
+
+    if (!opt_params && opt_param_len > 0) {
+        return NULL;
+    }
+
+    caps = bgp_capabilities_create();
+    if (!caps) {
+        return NULL;
+    }
+
+    if (opt_param_len == 0) {
+        return caps;
+    }
+
+    ptr = opt_params;
+    end = opt_params + opt_param_len;
+
+    /* Parse optional parameters */
+    while (ptr < end) {
+        uint8_t param_type;
+        uint8_t param_len;
+        const unsigned char *param_end;
+
+        /* Need at least 2 bytes for type and length */
+        if (ptr + 2 > end) {
+            break;
+        }
+
+        param_type = *ptr++;
+        param_len = *ptr++;
+        param_end = ptr + param_len;
+
+        /* Validate parameter doesn't exceed buffer */
+        if (param_end > end) {
+            break;
+        }
+
+        /* Only parse Capabilities parameter (type 2) */
+        if (param_type == BGP_OPT_PARAM_CAPABILITIES) {
+            /* Parse capabilities within this parameter */
+            while (ptr < param_end) {
+                uint8_t cap_code;
+                uint8_t cap_len;
+
+                /* Need at least 2 bytes for code and length */
+                if (ptr + 2 > param_end) {
+                    break;
+                }
+
+                cap_code = *ptr++;
+                cap_len = *ptr++;
+
+                /* Validate capability doesn't exceed parameter */
+                if (ptr + cap_len > param_end) {
+                    break;
+                }
+
+                /* Add capability to list */
+                bgp_capabilities_add(caps, cap_code, cap_len, cap_len > 0 ? ptr : NULL);
+                ptr += cap_len;
+            }
+        } else {
+            /* Skip unknown parameter types */
+            ptr = param_end;
+        }
+    }
+
+    return caps;
+}
+
+const char *bgp_capability_name(uint8_t code) {
+    switch (code) {
+        case BGP_CAP_MP_EXT:           return "Multiprotocol Extensions";
+        case BGP_CAP_ROUTE_REFRESH:    return "Route Refresh";
+        case BGP_CAP_ORF:              return "Outbound Route Filtering";
+        case BGP_CAP_EXTENDED_NEXTHOP: return "Extended Next Hop Encoding";
+        case BGP_CAP_EXTENDED_MESSAGE: return "BGP Extended Message";
+        case BGP_CAP_GRACEFUL_RESTART: return "Graceful Restart";
+        case BGP_CAP_FOUR_OCTET_ASN:   return "4-octet AS Number";
+        case BGP_CAP_ADD_PATH:         return "ADD-PATH";
+        case BGP_CAP_ENHANCED_REFRESH: return "Enhanced Route Refresh";
+        case BGP_CAP_FQDN:             return "FQDN";
+        default:                       return "Unknown";
+    }
+}

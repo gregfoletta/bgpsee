@@ -7,6 +7,7 @@
 
 #include "bgp_peer.h"
 #include "bgp_message.h"
+#include "bgp_capability.h"
 #include "bgp_print.h"
 #include "list.h"
 
@@ -332,6 +333,101 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
 
 
 
+/* Helper to get AFI name string */
+static const char *afi_name(uint16_t afi) {
+    switch (afi) {
+        case BGP_AFI_IPV4: return "IPv4";
+        case BGP_AFI_IPV6: return "IPv6";
+        default:           return "Unknown";
+    }
+}
+
+/* Helper to get SAFI name string */
+static const char *safi_name(uint8_t safi) {
+    switch (safi) {
+        case BGP_SAFI_UNICAST:   return "Unicast";
+        case BGP_SAFI_MULTICAST: return "Multicast";
+        case BGP_SAFI_MPLS:      return "MPLS";
+        default:                 return "Unknown";
+    }
+}
+
+/* Construct JSON object for a single capability */
+static json_t *construct_json_capability(struct bgp_capability *cap) {
+    json_t *cap_obj = json_object();
+
+    json_object_set_new(cap_obj, "code", json_integer(cap->code));
+    json_object_set_new(cap_obj, "name", json_string(bgp_capability_name(cap->code)));
+    json_object_set_new(cap_obj, "length", json_integer(cap->length));
+
+    /* Decode capability-specific values */
+    switch (cap->code) {
+        case BGP_CAP_MP_EXT:
+            if (cap->length >= 4 && cap->value) {
+                uint16_t afi = ((uint16_t)cap->value[0] << 8) | cap->value[1];
+                uint8_t safi = cap->value[3];
+                json_object_set_new(cap_obj, "afi", json_integer(afi));
+                json_object_set_new(cap_obj, "afi_name", json_string(afi_name(afi)));
+                json_object_set_new(cap_obj, "safi", json_integer(safi));
+                json_object_set_new(cap_obj, "safi_name", json_string(safi_name(safi)));
+            }
+            break;
+
+        case BGP_CAP_FOUR_OCTET_ASN:
+            if (cap->length >= 4 && cap->value) {
+                uint32_t asn = ((uint32_t)cap->value[0] << 24) |
+                               ((uint32_t)cap->value[1] << 16) |
+                               ((uint32_t)cap->value[2] << 8) |
+                               (uint32_t)cap->value[3];
+                json_object_set_new(cap_obj, "asn", json_integer(asn));
+            }
+            break;
+
+        case BGP_CAP_GRACEFUL_RESTART:
+            if (cap->length >= 2 && cap->value) {
+                uint16_t flags_time = ((uint16_t)cap->value[0] << 8) | cap->value[1];
+                json_object_set_new(cap_obj, "restart_flags", json_integer((flags_time >> 12) & 0xF));
+                json_object_set_new(cap_obj, "restart_time", json_integer(flags_time & 0x0FFF));
+            }
+            break;
+
+        case BGP_CAP_ADD_PATH:
+            if (cap->length >= 4 && cap->value) {
+                json_t *add_paths = json_array();
+                for (int i = 0; i + 3 < cap->length; i += 4) {
+                    json_t *entry = json_object();
+                    uint16_t afi = ((uint16_t)cap->value[i] << 8) | cap->value[i + 1];
+                    uint8_t safi = cap->value[i + 2];
+                    uint8_t send_recv = cap->value[i + 3];
+                    json_object_set_new(entry, "afi", json_integer(afi));
+                    json_object_set_new(entry, "afi_name", json_string(afi_name(afi)));
+                    json_object_set_new(entry, "safi", json_integer(safi));
+                    json_object_set_new(entry, "safi_name", json_string(safi_name(safi)));
+                    json_object_set_new(entry, "send_receive", json_integer(send_recv));
+                    json_array_append_new(add_paths, entry);
+                }
+                json_object_set_new(cap_obj, "address_families", add_paths);
+            }
+            break;
+
+        default:
+            /* For unknown capabilities, include raw hex value if present */
+            if (cap->length > 0 && cap->value) {
+                char *hex = malloc((size_t)(cap->length * 2 + 1));
+                if (hex) {
+                    for (int i = 0; i < cap->length; i++) {
+                        sprintf(hex + i * 2, "%02x", cap->value[i]);
+                    }
+                    json_object_set_new(cap_obj, "value_hex", json_string(hex));
+                    free(hex);
+                }
+            }
+            break;
+    }
+
+    return cap_obj;
+}
+
 json_t *construct_json_open(struct bgp_msg *msg) {
     json_t *leaf = json_object();
     char *router_id;
@@ -345,6 +441,20 @@ json_t *construct_json_open(struct bgp_msg *msg) {
     free(router_id);
 
     json_object_set_new( leaf, "optional_parameter_length", json_integer(msg->open.opt_param_len) );
+
+    /* Add capabilities */
+    if (msg->open.capabilities && msg->open.capabilities->count > 0) {
+        json_t *caps_array = json_array();
+        struct list_head *pos;
+        struct bgp_capability *cap;
+
+        list_for_each(pos, &msg->open.capabilities->caps) {
+            cap = list_entry(pos, struct bgp_capability, list);
+            json_array_append_new(caps_array, construct_json_capability(cap));
+        }
+
+        json_object_set_new(leaf, "capabilities", caps_array);
+    }
 
     return leaf;
 }
