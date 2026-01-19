@@ -14,6 +14,7 @@
 
 #include "testhelp.h"
 #include "../src/bgp_message.h"
+#include "../src/bgp_capability.h"
 #include "../src/list.h"
 
 /*
@@ -611,6 +612,284 @@ void test_nlri_invalid_prefix_length(void) {
     }
 }
 
+void test_capabilities_create_free(void) {
+    test_section("Capabilities create and free");
+
+    struct bgp_capabilities *caps = bgp_capabilities_create();
+    test_cond("bgp_capabilities_create returns non-NULL", caps != NULL);
+
+    if (caps) {
+        test_cond("Initial count is 0", caps->count == 0);
+        test_cond("Initial total_length is 0", caps->total_length == 0);
+        bgp_capabilities_free(caps);
+    }
+
+    /* Test freeing NULL (should not crash) */
+    bgp_capabilities_free(NULL);
+    test_cond("bgp_capabilities_free(NULL) doesn't crash", 1);
+}
+
+void test_capabilities_add_route_refresh(void) {
+    test_section("Capabilities add route refresh");
+
+    struct bgp_capabilities *caps = bgp_capabilities_create();
+    test_cond("Created capabilities", caps != NULL);
+
+    if (caps) {
+        int ret = bgp_capabilities_add_route_refresh(caps);
+        test_cond("add_route_refresh returns 0", ret == 0);
+        test_cond("count is 1", caps->count == 1);
+        /* Route refresh: code(1) + length(1) + value(0) = 2 bytes */
+        test_cond("total_length is 2", caps->total_length == 2);
+
+        bgp_capabilities_free(caps);
+    }
+}
+
+void test_capabilities_add_mp_ext(void) {
+    test_section("Capabilities add multiprotocol extensions");
+
+    struct bgp_capabilities *caps = bgp_capabilities_create();
+    test_cond("Created capabilities", caps != NULL);
+
+    if (caps) {
+        int ret = bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV4, BGP_SAFI_UNICAST);
+        test_cond("add_mp_ext IPv4 returns 0", ret == 0);
+        test_cond("count is 1", caps->count == 1);
+        /* MP ext: code(1) + length(1) + AFI(2) + reserved(1) + SAFI(1) = 6 bytes */
+        test_cond("total_length is 6", caps->total_length == 6);
+
+        ret = bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV6, BGP_SAFI_UNICAST);
+        test_cond("add_mp_ext IPv6 returns 0", ret == 0);
+        test_cond("count is 2", caps->count == 2);
+        test_cond("total_length is 12", caps->total_length == 12);
+
+        bgp_capabilities_free(caps);
+    }
+}
+
+void test_capabilities_add_four_octet_asn(void) {
+    test_section("Capabilities add 4-octet ASN");
+
+    struct bgp_capabilities *caps = bgp_capabilities_create();
+    test_cond("Created capabilities", caps != NULL);
+
+    if (caps) {
+        int ret = bgp_capabilities_add_four_octet_asn(caps, 65001);
+        test_cond("add_four_octet_asn returns 0", ret == 0);
+        test_cond("count is 1", caps->count == 1);
+        /* 4-octet ASN: code(1) + length(1) + ASN(4) = 6 bytes */
+        test_cond("total_length is 6", caps->total_length == 6);
+
+        bgp_capabilities_free(caps);
+    }
+}
+
+void test_capabilities_encode(void) {
+    test_section("Capabilities encode");
+
+    struct bgp_capabilities *caps = bgp_capabilities_create();
+    test_cond("Created capabilities", caps != NULL);
+
+    if (caps) {
+        unsigned char buf[256];
+
+        /* Empty capabilities */
+        int len = bgp_capabilities_encode(caps, buf, sizeof(buf));
+        test_cond("Empty caps encode returns 0", len == 0);
+
+        /* Add route refresh */
+        bgp_capabilities_add_route_refresh(caps);
+        len = bgp_capabilities_encode(caps, buf, sizeof(buf));
+        /* param_type(1) + param_len(1) + cap_code(1) + cap_len(1) = 4 bytes */
+        test_cond("Route refresh encode returns 4", len == 4);
+
+        /* Verify encoded data */
+        test_cond("Param type is 2 (capabilities)", buf[0] == 2);
+        test_cond("Param length is 2", buf[1] == 2);
+        test_cond("Cap code is 2 (route refresh)", buf[2] == BGP_CAP_ROUTE_REFRESH);
+        test_cond("Cap length is 0", buf[3] == 0);
+
+        bgp_capabilities_free(caps);
+    }
+}
+
+void test_capabilities_encode_multiple(void) {
+    test_section("Capabilities encode multiple");
+
+    struct bgp_capabilities *caps = bgp_capabilities_create();
+    test_cond("Created capabilities", caps != NULL);
+
+    if (caps) {
+        unsigned char buf[256];
+
+        bgp_capabilities_add_route_refresh(caps);
+        bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV4, BGP_SAFI_UNICAST);
+        bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV6, BGP_SAFI_UNICAST);
+
+        int len = bgp_capabilities_encode(caps, buf, sizeof(buf));
+        /* param_type(1) + param_len(1) + (route_refresh: 2) + (mp_ext: 6) + (mp_ext: 6) = 16 */
+        test_cond("Multiple caps encode returns 16", len == 16);
+
+        /* Verify param header */
+        test_cond("Param type is 2", buf[0] == 2);
+        test_cond("Param length is 14", buf[1] == 14);
+
+        /* Route refresh at offset 2 */
+        test_cond("First cap is route refresh", buf[2] == BGP_CAP_ROUTE_REFRESH);
+
+        /* IPv4 MP ext at offset 4 */
+        test_cond("Second cap is MP ext", buf[4] == BGP_CAP_MP_EXT);
+        test_cond("Second cap length is 4", buf[5] == 4);
+        /* AFI is big-endian: 0x00 0x01 for IPv4 */
+        test_cond("AFI high byte is 0", buf[6] == 0);
+        test_cond("AFI low byte is 1 (IPv4)", buf[7] == 1);
+        test_cond("Reserved byte is 0", buf[8] == 0);
+        test_cond("SAFI is 1 (unicast)", buf[9] == 1);
+
+        /* IPv6 MP ext at offset 10 */
+        test_cond("Third cap is MP ext", buf[10] == BGP_CAP_MP_EXT);
+        test_cond("AFI for third cap is 2 (IPv6)", buf[13] == 2);
+
+        bgp_capabilities_free(caps);
+    }
+}
+
+void test_send_open_no_caps(void) {
+    test_section("send_open without capabilities");
+
+    int fds[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) {
+        test_cond("Created socket pair", 0);
+        return;
+    }
+    test_cond("Created socket pair", 1);
+
+    /* Send OPEN with no capabilities */
+    ssize_t sent = send_open(fds[1], 4, 65001, 180, 0x0A000001, NULL);
+    test_cond("send_open returns 29 bytes (no caps)", sent == 29);
+
+    unsigned char buf[64];
+    ssize_t received = recv(fds[0], buf, sizeof(buf), 0);
+    test_cond("Received 29 bytes", received == 29);
+
+    /* Verify opt_param_len is 0 */
+    test_cond("opt_param_len is 0", buf[28] == 0);
+
+    close(fds[0]);
+    close(fds[1]);
+}
+
+void test_send_open_with_caps(void) {
+    test_section("send_open with capabilities");
+
+    int fds[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) {
+        test_cond("Created socket pair", 0);
+        return;
+    }
+    test_cond("Created socket pair", 1);
+
+    struct bgp_capabilities *caps = bgp_capabilities_create();
+    test_cond("Created capabilities", caps != NULL);
+
+    if (caps) {
+        bgp_capabilities_add_route_refresh(caps);
+        bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV4, BGP_SAFI_UNICAST);
+
+        /* 29 (base OPEN) + 2 (param header) + 2 (route refresh) + 6 (mp ext) = 39 */
+        ssize_t sent = send_open(fds[1], 4, 65001, 180, 0x0A000001, caps);
+        test_cond("send_open returns 39 bytes", sent == 39);
+
+        unsigned char buf[64];
+        ssize_t received = recv(fds[0], buf, sizeof(buf), 0);
+        test_cond("Received 39 bytes", received == 39);
+
+        /* Verify BGP header */
+        int marker_ok = 1;
+        for (int i = 0; i < 16; i++) {
+            if (buf[i] != 0xFF) marker_ok = 0;
+        }
+        test_cond("Marker is correct", marker_ok);
+
+        uint16_t length = ((uint16_t)buf[16] << 8) | buf[17];
+        test_cond("Length in header is 39", length == 39);
+
+        test_cond("Type is OPEN (1)", buf[18] == OPEN);
+
+        /* Verify OPEN fields */
+        test_cond("Version is 4", buf[19] == 4);
+
+        uint16_t asn = ((uint16_t)buf[20] << 8) | buf[21];
+        test_cond("ASN is 65001", asn == 65001);
+
+        uint16_t hold_time = ((uint16_t)buf[22] << 8) | buf[23];
+        test_cond("Hold time is 180", hold_time == 180);
+
+        /* opt_param_len: 2 (param header) + 2 (route refresh) + 6 (mp ext) = 10 */
+        test_cond("opt_param_len is 10", buf[28] == 10);
+
+        /* Verify capabilities parameter */
+        test_cond("Param type is 2 (capabilities)", buf[29] == 2);
+        test_cond("Param length is 8", buf[30] == 8);
+
+        /* Route refresh capability */
+        test_cond("First cap code is 2 (route refresh)", buf[31] == BGP_CAP_ROUTE_REFRESH);
+        test_cond("First cap length is 0", buf[32] == 0);
+
+        /* MP extensions capability */
+        test_cond("Second cap code is 1 (mp ext)", buf[33] == BGP_CAP_MP_EXT);
+        test_cond("Second cap length is 4", buf[34] == 4);
+
+        bgp_capabilities_free(caps);
+    }
+
+    close(fds[0]);
+    close(fds[1]);
+}
+
+void test_send_open_round_trip(void) {
+    test_section("send_open and parse round trip with capabilities");
+
+    int fds[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) {
+        test_cond("Created socket pair", 0);
+        return;
+    }
+    test_cond("Created socket pair", 1);
+
+    struct bgp_capabilities *caps = bgp_capabilities_create();
+    if (caps) {
+        bgp_capabilities_add_route_refresh(caps);
+        bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV6, BGP_SAFI_UNICAST);
+
+        send_open(fds[1], 4, 65001, 90, 0xC0A80001, caps);
+        close(fds[1]);
+
+        struct bgp_msg *parsed = recv_msg(fds[0]);
+        close(fds[0]);
+
+        test_cond("recv_msg parses OPEN with caps", parsed != NULL);
+
+        if (parsed) {
+            test_cond("Type is OPEN", parsed->type == OPEN);
+            test_cond("Version is 4", parsed->open.version == 4);
+            test_cond("ASN is 65001", parsed->open.asn == 65001);
+            test_cond("Hold time is 90", parsed->open.hold_time == 90);
+            test_cond("Router ID is 0xC0A80001", parsed->open.router_id == 0xC0A80001);
+            /* opt_param_len = param_header(2) + route_refresh(2) + mp_ext(6) = 10 */
+            test_cond("opt_param_len is 10", parsed->open.opt_param_len == 10);
+
+            free_msg(parsed);
+        }
+
+        bgp_capabilities_free(caps);
+    } else {
+        close(fds[0]);
+        close(fds[1]);
+    }
+}
+
 int main(void) {
     printf("BGPSee Message Parsing Tests\n");
     printf("============================\n");
@@ -634,6 +913,17 @@ int main(void) {
     test_send_notification_hold_timer();
     test_send_notification_bad_peer_as();
     test_notification_round_trip();
+
+    // Capability tests
+    test_capabilities_create_free();
+    test_capabilities_add_route_refresh();
+    test_capabilities_add_mp_ext();
+    test_capabilities_add_four_octet_asn();
+    test_capabilities_encode();
+    test_capabilities_encode_multiple();
+    test_send_open_no_caps();
+    test_send_open_with_caps();
+    test_send_open_round_trip();
 
     test_report();
 }

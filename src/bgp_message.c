@@ -6,6 +6,7 @@
 
 #include "debug.h"
 #include "bgp_message.h"
+#include "bgp_capability.h"
 #include "byte_conv.h"
 #include "list.h"
 #include "log.h"
@@ -345,9 +346,13 @@ int parse_open(struct bgp_msg *message, unsigned char *body) {
 }
 
 
-ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time, uint32_t router_id) {
+ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time,
+                  uint32_t router_id, const struct bgp_capabilities *caps) {
     unsigned char message_buffer[BGP_MAX_MESSAGE_SIZE];
     unsigned char *pos;
+    uint8_t opt_param_len = 0;
+    uint16_t total_length;
+    int caps_encoded = 0;
 
     pos = message_buffer + BGP_HEADER_LENGTH;
 
@@ -355,12 +360,30 @@ ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time, uin
     uint16_to_uchar_be_inc(&pos, asn);
     uint16_to_uchar_be_inc(&pos, hold_time);
     uint32_to_uchar_be_inc(&pos, router_id);
-    //TODO: temp opt param length
-    uint8_to_uchar(pos, 0);
 
-    create_header(BGP_OPEN_HEADER_LENGTH, OPEN, message_buffer);
+    /* Reserve space for opt_param_len, we'll fill it in after encoding caps */
+    unsigned char *opt_param_len_pos = pos;
+    pos++;
 
-    return send(fd, message_buffer, BGP_OPEN_HEADER_LENGTH, 0);
+    /* Encode capabilities if provided */
+    if (caps && caps->count > 0) {
+        size_t remaining = BGP_MAX_MESSAGE_SIZE - (size_t)(pos - message_buffer);
+        caps_encoded = bgp_capabilities_encode(caps, pos, remaining);
+        if (caps_encoded > 0) {
+            opt_param_len = (uint8_t)caps_encoded;
+            pos += caps_encoded;
+        }
+    }
+
+    /* Write the opt_param_len */
+    uint8_to_uchar(opt_param_len_pos, opt_param_len);
+
+    /* Calculate total message length */
+    total_length = (uint16_t)(pos - message_buffer);
+
+    create_header(total_length, OPEN, message_buffer);
+
+    return send(fd, message_buffer, total_length, 0);
 }
 
 

@@ -14,6 +14,7 @@
 #include "bgp.h"
 #include "bgp_peer.h"
 #include "bgp_message.h"
+#include "bgp_capability.h"
 #include "bgp_timers.h"
 
 #include "debug.h"
@@ -539,11 +540,23 @@ int fsm_state_idle(struct bgp_peer *peer, fd_set *set) {
 }
 
 int fsm_state_connect(struct bgp_peer *peer) {
+    struct bgp_capabilities *caps;
+
     log_print(LOG_DEBUG, "Peer %s FSM state: CONNECT\n", peer->name);
+
+    /* Build capabilities to advertise */
+    caps = bgp_capabilities_create();
+    if (caps) {
+        bgp_capabilities_add_route_refresh(caps);
+        bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV4, BGP_SAFI_UNICAST);
+        bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV6, BGP_SAFI_UNICAST);
+    }
 
     //TODO: fix hold timer
     log_print(LOG_DEBUG, "Sending OPEN to peer %s\n", peer->name);
-    send_open(peer->socket.fd, *peer->version, *peer->local_asn, 30, *peer->local_rid);
+    send_open(peer->socket.fd, *peer->version, *peer->local_asn, 30, *peer->local_rid, caps);
+
+    bgp_capabilities_free(caps);
 
     start_timer(peer->local_timers, HoldTimer);
     peer->fsm_state = OPENSENT;

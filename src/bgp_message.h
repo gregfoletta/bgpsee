@@ -1,9 +1,12 @@
-#pragma once 
+#pragma once
 
 #include <stdint.h>
 #include <sys/types.h>
 
 #include "list.h"
+
+/* Forward declaration for capabilities */
+struct bgp_capabilities;
 
 // Max IPv4 CIDR string: "255.255.255.255/32" (18 chars) + null
 #define MAX_IPV4_ROUTE_STRING 20
@@ -183,7 +186,8 @@ struct bgp_msg {
 
 struct bgp_msg *recv_msg(int socket_fd);
 int free_msg(struct bgp_msg *);
-ssize_t send_open(int, uint8_t, uint16_t, uint16_t, uint32_t);
+ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time,
+                  uint32_t router_id, const struct bgp_capabilities *caps);
 ssize_t send_keepalive(int);
 ssize_t send_notification(int fd, uint8_t code, uint8_t subcode);
 
