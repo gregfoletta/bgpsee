@@ -40,6 +40,12 @@ void bgp_capabilities_free(struct bgp_capabilities *caps) {
     free(caps);
 }
 
+/*
+ * GCC analyzer warning suppression: analyzer cannot track ownership transfer
+ * through linked list. Memory is freed by bgp_capabilities_free().
+ */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
 int bgp_capabilities_add(struct bgp_capabilities *caps,
                          uint8_t code, uint8_t length, const uint8_t *value) {
     struct bgp_capability *cap;
@@ -74,6 +80,7 @@ int bgp_capabilities_add(struct bgp_capabilities *caps,
 
     return 0;
 }
+#pragma GCC diagnostic pop
 
 int bgp_capabilities_add_route_refresh(struct bgp_capabilities *caps) {
     return bgp_capabilities_add(caps, BGP_CAP_ROUTE_REFRESH, 0, NULL);

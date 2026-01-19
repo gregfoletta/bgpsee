@@ -890,6 +890,282 @@ void test_send_open_round_trip(void) {
     }
 }
 
+void test_update_mp_reach_ipv6(void) {
+    test_section("UPDATE with MP_REACH_NLRI (IPv6)");
+
+    /*
+     * UPDATE with MP_REACH_NLRI containing IPv6 prefix 2001:db8::/32
+     * MP_REACH_NLRI body:
+     *   AFI (2) + SAFI (1) + NH_Len (1) + Next_Hop (16) + Reserved (1) + NLRI (5)
+     *   = 2 + 1 + 1 + 16 + 1 + 5 = 26 bytes
+     *
+     * Path attribute header (extended length): flags (1) + type (1) + length (2) = 4 bytes
+     * Total path attrs = 4 + 26 = 30 bytes
+     * Total: 19 (header) + 2 (withdrawn_len=0) + 2 (pa_len=30) + 30 (pa) = 53 bytes
+     */
+
+    unsigned char msg[53];
+    int offset = make_bgp_header(msg, 53, UPDATE);
+
+    /* Withdrawn routes length = 0 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+
+    /* Path attributes length = 30 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x1E;  /* 30 */
+
+    /* MP_REACH_NLRI attribute (type 14) */
+    msg[offset++] = 0x90;  /* Flags: Optional, Transitive, Extended Length */
+    msg[offset++] = 0x0E;  /* Type: MP_REACH_NLRI (14) */
+    msg[offset++] = 0x00;  /* Length high byte */
+    msg[offset++] = 0x1A;  /* Length low byte (26) */
+
+    /* AFI = 2 (IPv6) */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x02;
+
+    /* SAFI = 1 (Unicast) */
+    msg[offset++] = 0x01;
+
+    /* Next Hop Length = 16 */
+    msg[offset++] = 0x10;
+
+    /* Next Hop: 2001:db8::1 */
+    msg[offset++] = 0x20; msg[offset++] = 0x01;  /* 2001 */
+    msg[offset++] = 0x0d; msg[offset++] = 0xb8;  /* 0db8 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;  /* 0000 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;  /* 0000 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;  /* 0000 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;  /* 0000 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;  /* 0000 */
+    msg[offset++] = 0x00; msg[offset++] = 0x01;  /* 0001 */
+
+    /* Reserved byte */
+    msg[offset++] = 0x00;
+
+    /* NLRI: 2001:db8::/32 (length=32, 4 bytes of prefix) */
+    msg[offset++] = 0x20;  /* 32 bits */
+    msg[offset++] = 0x20; msg[offset++] = 0x01;  /* 2001 */
+    msg[offset++] = 0x0d; msg[offset++] = 0xb8;  /* 0db8 */
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for MP_REACH_NLRI IPv6", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_msg *parsed = recv_msg(fd);
+        close(fd);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed) {
+            test_cond("UPDATE type is correct", parsed->type == UPDATE);
+            test_cond("MP_REACH_NLRI attribute exists",
+                parsed->update->path_attrs[MP_REACH_NLRI] != NULL);
+
+            if (parsed->update->path_attrs[MP_REACH_NLRI]) {
+                struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+                test_cond("mp_reach pointer is not NULL", mp != NULL);
+
+                if (mp) {
+                    test_cond("AFI is 2 (IPv6)", mp->afi == 2);
+                    test_cond("SAFI is 1 (Unicast)", mp->safi == 1);
+                    test_cond("Next hop length is 16", mp->nh_length == 16);
+                    test_cond("NLRI list is not empty", !list_empty(&mp->nlri));
+
+                    if (!list_empty(&mp->nlri)) {
+                        struct ipv6_nlri *nlri = list_entry(mp->nlri.next, struct ipv6_nlri, list);
+                        test_cond("NLRI prefix length is 32", nlri->length == 32);
+                        test_cond("NLRI prefix starts with 2001:0db8",
+                            nlri->prefix[0] == 0x20 && nlri->prefix[1] == 0x01 &&
+                            nlri->prefix[2] == 0x0d && nlri->prefix[3] == 0xb8);
+                    }
+                }
+            }
+
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_update_mp_unreach_ipv6(void) {
+    test_section("UPDATE with MP_UNREACH_NLRI (IPv6)");
+
+    /*
+     * UPDATE with MP_UNREACH_NLRI withdrawing 2001:db8:1::/48
+     * MP_UNREACH_NLRI body:
+     *   AFI (2) + SAFI (1) + Withdrawn (7) = 10 bytes
+     *
+     * Path attribute header (extended length): flags (1) + type (1) + length (2) = 4 bytes
+     * Total path attrs = 4 + 10 = 14 bytes
+     * Total: 19 (header) + 2 (withdrawn_len=0) + 2 (pa_len=14) + 14 (pa) = 37 bytes
+     */
+
+    unsigned char msg[37];
+    int offset = make_bgp_header(msg, 37, UPDATE);
+
+    /* Withdrawn routes length = 0 (IPv4 withdrawn) */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+
+    /* Path attributes length = 14 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x0E;  /* 14 */
+
+    /* MP_UNREACH_NLRI attribute (type 15) */
+    msg[offset++] = 0x90;  /* Flags: Optional, Transitive, Extended Length */
+    msg[offset++] = 0x0F;  /* Type: MP_UNREACH_NLRI (15) */
+    msg[offset++] = 0x00;  /* Length high byte */
+    msg[offset++] = 0x0A;  /* Length low byte (10) */
+
+    /* AFI = 2 (IPv6) */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x02;
+
+    /* SAFI = 1 (Unicast) */
+    msg[offset++] = 0x01;
+
+    /* Withdrawn: 2001:db8:1::/48 (length=48, 6 bytes of prefix) */
+    msg[offset++] = 0x30;  /* 48 bits */
+    msg[offset++] = 0x20; msg[offset++] = 0x01;  /* 2001 */
+    msg[offset++] = 0x0d; msg[offset++] = 0xb8;  /* 0db8 */
+    msg[offset++] = 0x00; msg[offset++] = 0x01;  /* 0001 */
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for MP_UNREACH_NLRI IPv6", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_msg *parsed = recv_msg(fd);
+        close(fd);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed) {
+            test_cond("UPDATE type is correct", parsed->type == UPDATE);
+            test_cond("MP_UNREACH_NLRI attribute exists",
+                parsed->update->path_attrs[MP_UNREACH_NLRI] != NULL);
+
+            if (parsed->update->path_attrs[MP_UNREACH_NLRI]) {
+                struct mp_unreach_nlri *mp = parsed->update->path_attrs[MP_UNREACH_NLRI]->mp_unreach;
+                test_cond("mp_unreach pointer is not NULL", mp != NULL);
+
+                if (mp) {
+                    test_cond("AFI is 2 (IPv6)", mp->afi == 2);
+                    test_cond("SAFI is 1 (Unicast)", mp->safi == 1);
+                    test_cond("Withdrawn list is not empty", !list_empty(&mp->withdrawn));
+
+                    if (!list_empty(&mp->withdrawn)) {
+                        struct ipv6_nlri *nlri = list_entry(mp->withdrawn.next, struct ipv6_nlri, list);
+                        test_cond("Withdrawn prefix length is 48", nlri->length == 48);
+                        test_cond("Withdrawn prefix starts with 2001:0db8:0001",
+                            nlri->prefix[0] == 0x20 && nlri->prefix[1] == 0x01 &&
+                            nlri->prefix[2] == 0x0d && nlri->prefix[3] == 0xb8 &&
+                            nlri->prefix[4] == 0x00 && nlri->prefix[5] == 0x01);
+                    }
+                }
+            }
+
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_update_mp_reach_dual_nexthop(void) {
+    test_section("UPDATE with MP_REACH_NLRI (dual next hop)");
+
+    /*
+     * UPDATE with MP_REACH_NLRI with global + link-local next hop (32 bytes)
+     * MP_REACH_NLRI format:
+     *   AFI (2) + SAFI (1) + NH_Len (1) + Next_Hop (32) + Reserved (1) + NLRI (5)
+     *   = 2 + 1 + 1 + 32 + 1 + 5 = 42 bytes
+     *
+     * Path attribute header with extended length: flags (1) + type (1) + length (2) = 4 bytes
+     * Total path attrs = 46 bytes
+     * Total: 19 (header) + 2 (withdrawn_len=0) + 2 (pa_len=46) + 46 (pa) = 69 bytes
+     */
+
+    unsigned char msg[69];
+    int offset = make_bgp_header(msg, 69, UPDATE);
+
+    /* Withdrawn routes length = 0 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+
+    /* Path attributes length = 46 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x2E;  /* 46 */
+
+    /* MP_REACH_NLRI attribute (type 14) with extended length */
+    msg[offset++] = 0x90;  /* Flags: Optional, Transitive, Extended Length */
+    msg[offset++] = 0x0E;  /* Type: MP_REACH_NLRI (14) */
+    msg[offset++] = 0x00;  /* Length high byte */
+    msg[offset++] = 0x2A;  /* Length low byte (42) */
+
+    /* AFI = 2 (IPv6) */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x02;
+
+    /* SAFI = 1 (Unicast) */
+    msg[offset++] = 0x01;
+
+    /* Next Hop Length = 32 (global + link-local) */
+    msg[offset++] = 0x20;
+
+    /* Global Next Hop: 2001:db8::1 */
+    msg[offset++] = 0x20; msg[offset++] = 0x01;
+    msg[offset++] = 0x0d; msg[offset++] = 0xb8;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;
+
+    /* Link-local Next Hop: fe80::1 */
+    msg[offset++] = 0xfe; msg[offset++] = 0x80;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;
+
+    /* Reserved byte */
+    msg[offset++] = 0x00;
+
+    /* NLRI: 2001:db8::/32 */
+    msg[offset++] = 0x20;
+    msg[offset++] = 0x20; msg[offset++] = 0x01;
+    msg[offset++] = 0x0d; msg[offset++] = 0xb8;
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for dual next hop", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_msg *parsed = recv_msg(fd);
+        close(fd);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed && parsed->update->path_attrs[MP_REACH_NLRI]) {
+            struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+
+            if (mp) {
+                test_cond("Next hop length is 32", mp->nh_length == 32);
+                test_cond("Global next hop starts with 2001",
+                    mp->next_hop[0] == 0x20 && mp->next_hop[1] == 0x01);
+                test_cond("Link-local next hop starts with fe80",
+                    mp->next_hop[16] == 0xfe && mp->next_hop[17] == 0x80);
+            }
+
+            free_msg(parsed);
+        } else if (parsed) {
+            free_msg(parsed);
+        }
+    }
+}
+
 int main(void) {
     printf("BGPSee Message Parsing Tests\n");
     printf("============================\n");
@@ -924,6 +1200,11 @@ int main(void) {
     test_send_open_no_caps();
     test_send_open_with_caps();
     test_send_open_round_trip();
+
+    // MP_REACH_NLRI and MP_UNREACH_NLRI tests (IPv6)
+    test_update_mp_reach_ipv6();
+    test_update_mp_unreach_ipv6();
+    test_update_mp_reach_dual_nexthop();
 
     test_report();
 }

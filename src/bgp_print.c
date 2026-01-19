@@ -9,6 +9,7 @@
 #include "bgp_message.h"
 #include "bgp_capability.h"
 #include "bgp_print.h"
+#include "byte_conv.h"
 #include "list.h"
 
 
@@ -364,7 +365,7 @@ static json_t *construct_json_capability(struct bgp_capability *cap) {
     switch (cap->code) {
         case BGP_CAP_MP_EXT:
             if (cap->length >= 4 && cap->value) {
-                uint16_t afi = ((uint16_t)cap->value[0] << 8) | cap->value[1];
+                uint16_t afi = uchar_be_to_uint16(cap->value);
                 uint8_t safi = cap->value[3];
                 json_object_set_new(cap_obj, "afi", json_integer(afi));
                 json_object_set_new(cap_obj, "afi_name", json_string(afi_name(afi)));
@@ -385,7 +386,7 @@ static json_t *construct_json_capability(struct bgp_capability *cap) {
 
         case BGP_CAP_GRACEFUL_RESTART:
             if (cap->length >= 2 && cap->value) {
-                uint16_t flags_time = ((uint16_t)cap->value[0] << 8) | cap->value[1];
+                uint16_t flags_time = uchar_be_to_uint16(cap->value);
                 json_object_set_new(cap_obj, "restart_flags", json_integer((flags_time >> 12) & 0xF));
                 json_object_set_new(cap_obj, "restart_time", json_integer(flags_time & 0x0FFF));
             }
@@ -396,7 +397,7 @@ static json_t *construct_json_capability(struct bgp_capability *cap) {
                 json_t *add_paths = json_array();
                 for (int i = 0; i + 3 < cap->length; i += 4) {
                     json_t *entry = json_object();
-                    uint16_t afi = ((uint16_t)cap->value[i] << 8) | cap->value[i + 1];
+                    uint16_t afi = uchar_be_to_uint16(cap->value + i);
                     uint8_t safi = cap->value[i + 2];
                     uint8_t send_recv = cap->value[i + 3];
                     json_object_set_new(entry, "afi", json_integer(afi));
@@ -467,6 +468,8 @@ json_t *construct_json_med(struct bgp_path_attribute *);
 json_t *construct_json_local_pref(struct bgp_path_attribute *);
 json_t *construct_json_atomic_aggregate(struct bgp_path_attribute *);
 json_t *construct_json_aggregator(struct bgp_path_attribute *);
+json_t *construct_json_mp_reach(struct bgp_path_attribute *);
+json_t *construct_json_mp_unreach(struct bgp_path_attribute *);
 
 json_t *construct_json_update(struct bgp_msg *msg) {
     struct list_head *i;
@@ -520,6 +523,24 @@ json_t *construct_json_update(struct bgp_msg *msg) {
             path_attributes,
             pa_id_to_name[x],
             path_attr_dispatch[x](msg->update->path_attrs[x])
+        );
+    }
+
+    /* Handle MP_REACH_NLRI (type 14) */
+    if (msg->update->path_attrs[MP_REACH_NLRI]) {
+        json_object_set_new(
+            path_attributes,
+            "MP_REACH_NLRI",
+            construct_json_mp_reach(msg->update->path_attrs[MP_REACH_NLRI])
+        );
+    }
+
+    /* Handle MP_UNREACH_NLRI (type 15) */
+    if (msg->update->path_attrs[MP_UNREACH_NLRI]) {
+        json_object_set_new(
+            path_attributes,
+            "MP_UNREACH_NLRI",
+            construct_json_mp_unreach(msg->update->path_attrs[MP_UNREACH_NLRI])
         );
     }
 
@@ -629,6 +650,108 @@ json_t *construct_json_aggregator(struct bgp_path_attribute *attr) {
     free(agg_ip_str);
 
     return aggregator;
+}
+
+/* Helper to format IPv6 address as string */
+static char *ipv6_string(const uint8_t *addr) {
+    char *str = malloc(48);
+    if (!str) return NULL;
+
+    snprintf(str, 48,
+        "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+        addr[0], addr[1], addr[2], addr[3],
+        addr[4], addr[5], addr[6], addr[7],
+        addr[8], addr[9], addr[10], addr[11],
+        addr[12], addr[13], addr[14], addr[15]);
+
+    return str;
+}
+
+json_t *construct_json_mp_reach(struct bgp_path_attribute *attr) {
+    json_t *mp = json_object();
+    struct list_head *i;
+
+    if (!attr->mp_reach) {
+        return mp;
+    }
+
+    json_object_set_new(mp, "afi", json_integer(attr->mp_reach->afi));
+    json_object_set_new(mp, "afi_name", json_string(afi_name(attr->mp_reach->afi)));
+    json_object_set_new(mp, "safi", json_integer(attr->mp_reach->safi));
+    json_object_set_new(mp, "safi_name", json_string(safi_name(attr->mp_reach->safi)));
+
+    /* Format next hop based on length */
+    if (attr->mp_reach->nh_length == 16) {
+        /* Single IPv6 address */
+        char *nh = ipv6_string(attr->mp_reach->next_hop);
+        json_object_set_new(mp, "next_hop", json_string(nh));
+        free(nh);
+    } else if (attr->mp_reach->nh_length == 32) {
+        /* Global + link-local IPv6 addresses */
+        char *nh_global = ipv6_string(attr->mp_reach->next_hop);
+        char *nh_ll = ipv6_string(attr->mp_reach->next_hop + 16);
+        json_object_set_new(mp, "next_hop_global", json_string(nh_global));
+        json_object_set_new(mp, "next_hop_link_local", json_string(nh_ll));
+        free(nh_global);
+        free(nh_ll);
+    } else if (attr->mp_reach->nh_length == 4) {
+        /* IPv4 next hop */
+        uint32_t nh_ipv4 = ((uint32_t)attr->mp_reach->next_hop[0] << 24) |
+                          ((uint32_t)attr->mp_reach->next_hop[1] << 16) |
+                          ((uint32_t)attr->mp_reach->next_hop[2] << 8) |
+                          (uint32_t)attr->mp_reach->next_hop[3];
+        char *nh = ipv4_string(nh_ipv4);
+        json_object_set_new(mp, "next_hop", json_string(nh));
+        free(nh);
+    }
+
+    /* NLRI routes */
+    json_t *nlri_array = json_array();
+    if (attr->mp_reach->afi == 2) {  /* IPv6 */
+        list_for_each(i, &attr->mp_reach->nlri) {
+            struct ipv6_nlri *nlri = list_entry(i, struct ipv6_nlri, list);
+            json_array_append_new(nlri_array, json_string(nlri->string));
+        }
+    } else if (attr->mp_reach->afi == 1) {  /* IPv4 */
+        list_for_each(i, &attr->mp_reach->nlri) {
+            struct ipv4_nlri *nlri = list_entry(i, struct ipv4_nlri, list);
+            json_array_append_new(nlri_array, json_string(nlri->string));
+        }
+    }
+    json_object_set_new(mp, "nlri", nlri_array);
+
+    return mp;
+}
+
+json_t *construct_json_mp_unreach(struct bgp_path_attribute *attr) {
+    json_t *mp = json_object();
+    struct list_head *i;
+
+    if (!attr->mp_unreach) {
+        return mp;
+    }
+
+    json_object_set_new(mp, "afi", json_integer(attr->mp_unreach->afi));
+    json_object_set_new(mp, "afi_name", json_string(afi_name(attr->mp_unreach->afi)));
+    json_object_set_new(mp, "safi", json_integer(attr->mp_unreach->safi));
+    json_object_set_new(mp, "safi_name", json_string(safi_name(attr->mp_unreach->safi)));
+
+    /* Withdrawn routes */
+    json_t *withdrawn_array = json_array();
+    if (attr->mp_unreach->afi == 2) {  /* IPv6 */
+        list_for_each(i, &attr->mp_unreach->withdrawn) {
+            struct ipv6_nlri *nlri = list_entry(i, struct ipv6_nlri, list);
+            json_array_append_new(withdrawn_array, json_string(nlri->string));
+        }
+    } else if (attr->mp_unreach->afi == 1) {  /* IPv4 */
+        list_for_each(i, &attr->mp_unreach->withdrawn) {
+            struct ipv4_nlri *nlri = list_entry(i, struct ipv4_nlri, list);
+            json_array_append_new(withdrawn_array, json_string(nlri->string));
+        }
+    }
+    json_object_set_new(mp, "withdrawn_routes", withdrawn_array);
+
+    return mp;
 }
 
 

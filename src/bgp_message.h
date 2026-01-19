@@ -10,6 +10,8 @@ struct bgp_capabilities;
 
 // Max IPv4 CIDR string: "255.255.255.255/32" (18 chars) + null
 #define MAX_IPV4_ROUTE_STRING 20
+// Max IPv6 CIDR string: "xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx/128" (43 chars) + null
+#define MAX_IPV6_ROUTE_STRING 48
 
 enum bgp_msg_type {
     OPEN = 1,
@@ -66,7 +68,9 @@ struct bgp_path_attribute {
         uint32_t local_pref;
         //Atomic aggregate is length zero, defined only by the type
         struct aggregator *aggregator;
-    }; 
+        struct mp_reach_nlri *mp_reach;
+        struct mp_unreach_nlri *mp_unreach;
+    };
 };
 
 /* 
@@ -84,10 +88,40 @@ struct ipv4_nlri {
     char string[MAX_IPV4_ROUTE_STRING];
 };
 
+struct ipv6_nlri {
+    uint8_t length;      /* Prefix length in bits */
+    uint8_t bytes;       /* Number of bytes needed for prefix */
+    uint8_t prefix[16];  /* IPv6 prefix (up to 128 bits) */
+    struct list_head list;
+    char string[MAX_IPV6_ROUTE_STRING];
+};
+
+/*
+ * MP_REACH_NLRI (Type 14) - RFC 4760
+ * Carries reachable routes for non-IPv4 unicast address families
+ */
+struct mp_reach_nlri {
+    uint16_t afi;           /* Address Family Identifier */
+    uint8_t safi;           /* Subsequent Address Family Identifier */
+    uint8_t nh_length;      /* Next Hop length in bytes */
+    uint8_t next_hop[32];   /* Next Hop address (up to 32 bytes for IPv6 link-local) */
+    struct list_head nlri;  /* List of ipv6_nlri (or ipv4_nlri depending on AFI) */
+};
+
+/*
+ * MP_UNREACH_NLRI (Type 15) - RFC 4760
+ * Carries withdrawn routes for non-IPv4 unicast address families
+ */
+struct mp_unreach_nlri {
+    uint16_t afi;                   /* Address Family Identifier */
+    uint8_t safi;                   /* Subsequent Address Family Identifier */
+    struct list_head withdrawn;     /* List of withdrawn routes */
+};
+
 /*
  * Path attributes index by their value, running from 0-255
  * https://www.iana.org/assignments/bgp-parameters/bgp-parameters.xhtml
- * 
+ *
  */
 
 enum bgp_update_attrs {
@@ -97,7 +131,10 @@ enum bgp_update_attrs {
     MULTI_EXIT_DISC,
     LOCAL_PREF,
     ATOMIC_AGGREGATE,
-    AGGREGATOR
+    AGGREGATOR,
+    /* ... gap ... */
+    MP_REACH_NLRI = 14,
+    MP_UNREACH_NLRI = 15
 };
 
 #define MAX_ATTRIBUTE 255

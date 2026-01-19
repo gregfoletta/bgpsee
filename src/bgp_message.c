@@ -193,6 +193,8 @@ int free_update(struct bgp_update *);
 int free_path_attributes(struct bgp_update *);
 int free_as_path(struct bgp_path_attribute *);
 int free_aggregator(struct bgp_path_attribute *);
+int free_mp_reach(struct bgp_path_attribute *);
+int free_mp_unreach(struct bgp_path_attribute *);
 
 int free_msg(struct bgp_msg *message) {
     switch (message->type) {
@@ -240,6 +242,8 @@ int free_path_attributes(struct bgp_update *update) {
 
     pa_free_dispatch[AS_PATH] = &free_as_path;
     pa_free_dispatch[AGGREGATOR] = &free_aggregator;
+    pa_free_dispatch[MP_REACH_NLRI] = &free_mp_reach;
+    pa_free_dispatch[MP_UNREACH_NLRI] = &free_mp_unreach;
 
     //Note the <=
     for (int attr = ORIGIN; attr <= MAX_ATTRIBUTE; attr++) {
@@ -278,11 +282,45 @@ int free_as_path(struct bgp_path_attribute *attribute) {
 
 
 int free_aggregator(struct bgp_path_attribute *attribute) {
-    free(attribute->aggregator); 
+    free(attribute->aggregator);
 
     return 0;
 }
-    
+
+int free_mp_reach(struct bgp_path_attribute *attribute) {
+    struct list_head *i, *tmp;
+
+    if (!attribute->mp_reach) {
+        return 0;
+    }
+
+    /* Free NLRI list - entries could be ipv4_nlri or ipv6_nlri depending on AFI */
+    list_for_each_safe(i, tmp, &attribute->mp_reach->nlri) {
+        list_del(i);
+        /* Both ipv4_nlri and ipv6_nlri have list as first member after length/bytes/prefix */
+        free(list_entry(i, struct ipv6_nlri, list));
+    }
+
+    free(attribute->mp_reach);
+    return 0;
+}
+
+int free_mp_unreach(struct bgp_path_attribute *attribute) {
+    struct list_head *i, *tmp;
+
+    if (!attribute->mp_unreach) {
+        return 0;
+    }
+
+    /* Free withdrawn routes list */
+    list_for_each_safe(i, tmp, &attribute->mp_unreach->withdrawn) {
+        list_del(i);
+        free(list_entry(i, struct ipv6_nlri, list));
+    }
+
+    free(attribute->mp_unreach);
+    return 0;
+}
 
 
 int validate_header(unsigned char *header, struct bgp_msg *message) {
@@ -506,7 +544,9 @@ struct aggregator *parse_update_aggregator(unsigned char **body) {
     return agg;
 }
 
-
+/* Forward declarations for MP_REACH/UNREACH parsing */
+struct mp_reach_nlri *parse_mp_reach_nlri(unsigned char **body, uint16_t attr_length);
+struct mp_unreach_nlri *parse_mp_unreach_nlri(unsigned char **body, uint16_t attr_length);
 
 struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
     unsigned char **pos = body;
@@ -553,6 +593,16 @@ struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
         case AGGREGATOR:
             attr->aggregator = parse_update_aggregator(pos);
             break;
+        case MP_REACH_NLRI:
+            if (attr->length > 0) {
+                attr->mp_reach = parse_mp_reach_nlri(pos, attr->length);
+            }
+            break;
+        case MP_UNREACH_NLRI:
+            if (attr->length > 0) {
+                attr->mp_unreach = parse_mp_unreach_nlri(pos, attr->length);
+            }
+            break;
         default:
             //Skip over the top of the attribute
             *pos += attr->length;
@@ -597,6 +647,156 @@ struct ipv4_nlri *parse_ipv4_nlri(unsigned char **body) {
 
 
     return nlri;
+}
+
+struct ipv6_nlri *parse_ipv6_nlri(unsigned char **body) {
+    unsigned char **pos = body;
+    struct ipv6_nlri *nlri = NULL;
+
+    nlri = calloc(1, sizeof(*nlri));
+    if (!nlri) {
+        return NULL;
+    }
+
+    INIT_LIST_HEAD(&nlri->list);
+
+    nlri->length = uchar_to_uint8_inc(pos);
+    /* ceil(length / 8) */
+    nlri->bytes = (uint8_t)((nlri->length + 7) / 8);
+
+    /* IPv6 prefix cannot exceed 128 bits (16 bytes) */
+    if (nlri->bytes > 16) {
+        free(nlri);
+        return NULL;
+    }
+
+    memset(nlri->prefix, 0, sizeof(nlri->prefix));
+    for (int x = 0; x < nlri->bytes; x++) {
+        nlri->prefix[x] = uchar_to_uint8_inc(pos);
+    }
+
+    /* Format IPv6 address string */
+    snprintf(
+        nlri->string,
+        MAX_IPV6_ROUTE_STRING,
+        "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x/%d",
+        nlri->prefix[0], nlri->prefix[1], nlri->prefix[2], nlri->prefix[3],
+        nlri->prefix[4], nlri->prefix[5], nlri->prefix[6], nlri->prefix[7],
+        nlri->prefix[8], nlri->prefix[9], nlri->prefix[10], nlri->prefix[11],
+        nlri->prefix[12], nlri->prefix[13], nlri->prefix[14], nlri->prefix[15],
+        nlri->length
+    );
+
+    return nlri;
+}
+
+/*
+ * Parse MP_REACH_NLRI attribute (type 14) - RFC 4760
+ * Format:
+ *   AFI (2) + SAFI (1) + NH_Len (1) + Next_Hop (variable) + Reserved (1) + NLRI (variable)
+ */
+struct mp_reach_nlri *parse_mp_reach_nlri(unsigned char **body, uint16_t attr_length) {
+    unsigned char **pos = body;
+    unsigned char *end = *body + attr_length;
+    struct mp_reach_nlri *mp;
+
+    if (attr_length < 5) {  /* Minimum: AFI(2) + SAFI(1) + NH_Len(1) + Reserved(1) */
+        return NULL;
+    }
+
+    mp = calloc(1, sizeof(*mp));
+    if (!mp) {
+        return NULL;
+    }
+
+    INIT_LIST_HEAD(&mp->nlri);
+
+    mp->afi = uchar_be_to_uint16_inc(pos);
+    mp->safi = uchar_to_uint8_inc(pos);
+    mp->nh_length = uchar_to_uint8_inc(pos);
+
+    /* Validate next hop length */
+    if (mp->nh_length > 32 || *pos + mp->nh_length + 1 > end) {
+        free(mp);
+        return NULL;
+    }
+
+    /* Copy next hop */
+    memset(mp->next_hop, 0, sizeof(mp->next_hop));
+    memcpy(mp->next_hop, *pos, mp->nh_length);
+    *pos += mp->nh_length;
+
+    /* Skip reserved byte */
+    (*pos)++;
+
+    /* Parse NLRI based on AFI */
+    while (*pos < end) {
+        if (mp->afi == 2) {  /* IPv6 */
+            struct ipv6_nlri *nlri = parse_ipv6_nlri(pos);
+            if (!nlri) {
+                break;
+            }
+            list_add_tail(&nlri->list, &mp->nlri);
+        } else if (mp->afi == 1) {  /* IPv4 */
+            struct ipv4_nlri *nlri = parse_ipv4_nlri(pos);
+            if (!nlri) {
+                break;
+            }
+            list_add_tail(&nlri->list, &mp->nlri);
+        } else {
+            /* Unknown AFI, skip remaining */
+            break;
+        }
+    }
+
+    return mp;
+}
+
+/*
+ * Parse MP_UNREACH_NLRI attribute (type 15) - RFC 4760
+ * Format:
+ *   AFI (2) + SAFI (1) + Withdrawn_Routes (variable)
+ */
+struct mp_unreach_nlri *parse_mp_unreach_nlri(unsigned char **body, uint16_t attr_length) {
+    unsigned char **pos = body;
+    unsigned char *end = *body + attr_length;
+    struct mp_unreach_nlri *mp;
+
+    if (attr_length < 3) {  /* Minimum: AFI(2) + SAFI(1) */
+        return NULL;
+    }
+
+    mp = calloc(1, sizeof(*mp));
+    if (!mp) {
+        return NULL;
+    }
+
+    INIT_LIST_HEAD(&mp->withdrawn);
+
+    mp->afi = uchar_be_to_uint16_inc(pos);
+    mp->safi = uchar_to_uint8_inc(pos);
+
+    /* Parse withdrawn routes based on AFI */
+    while (*pos < end) {
+        if (mp->afi == 2) {  /* IPv6 */
+            struct ipv6_nlri *nlri = parse_ipv6_nlri(pos);
+            if (!nlri) {
+                break;
+            }
+            list_add_tail(&nlri->list, &mp->withdrawn);
+        } else if (mp->afi == 1) {  /* IPv4 */
+            struct ipv4_nlri *nlri = parse_ipv4_nlri(pos);
+            if (!nlri) {
+                break;
+            }
+            list_add_tail(&nlri->list, &mp->withdrawn);
+        } else {
+            /* Unknown AFI, skip remaining */
+            break;
+        }
+    }
+
+    return mp;
 }
 
 
