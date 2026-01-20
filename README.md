@@ -21,13 +21,13 @@ BGPSee is a multi-threaded BGP client for the CLI. Its goal is to allow you to q
 
 # Version
 
-Current version is **0.0.5**
+Current version is **0.0.6**
 
-Major changes from **0.0.4** to **0.0.5**:
-- Graceful shutdown with NOTIFICATION messages (CEASE/Administrative Shutdown)
-- NOTIFICATION sent on OPEN validation errors (bad peer ASN, version mismatch)
-- NOTIFICATION sent on hold timer expiry
-- Added 21 new tests for NOTIFICATION functionality 
+Major changes from **0.0.5** to **0.0.6**:
+- IPv6 support with MP_REACH_NLRI and MP_UNREACH_NLRI parsing (RFC 4760)
+- IPv6 addresses formatted with zero compression (RFC 5952)
+- Added JSONL output format for single-line JSON messages
+- Capability parsing and JSON output for OPEN messages 
 
 See the [CHANGELOG](CHANGELOG.md) for further information.
 
