@@ -13,8 +13,8 @@
 #include "list.h"
 
 
-int print_msg_stdout(struct bgp_peer *, struct bgp_msg *);
 int print_msg_json(struct bgp_peer *, struct bgp_msg *);
+int print_msg_jsonl(struct bgp_peer *, struct bgp_msg *);
 
     char *type_string[] = {
         "<NULL>",
@@ -30,19 +30,13 @@ int print_msg_json(struct bgp_peer *, struct bgp_msg *);
  * Please leave your judgement at the door
  */
 
-void print_open(struct bgp_msg *);
-void print_update(struct bgp_msg *);
-void print_notification(struct bgp_msg *);
-void print_keepalive(struct bgp_msg *);
-void print_routerefresh(struct bgp_msg *);
-
 int _set_bgp_output(struct bgp_peer *peer, enum bgp_output format) {
     switch (format) {
-        case BGP_OUT_KV:
-            peer->print_msg = print_msg_stdout;
-            break;
         case BGP_OUT_JSON:
             peer->print_msg = print_msg_json;
+            break;
+        case BGP_OUT_JSONL:
+            peer->print_msg = print_msg_jsonl;
             break;
         default:
             return -2;
@@ -51,88 +45,9 @@ int _set_bgp_output(struct bgp_peer *peer, enum bgp_output format) {
     return 0;
 }
 
-/*
- * Standard KV outputs
- */
-
-int print_msg_stdout(struct bgp_peer *peer, struct bgp_msg *msg) {
-    void (*dispatch[5]) (struct bgp_msg *) = {
-        &print_open,
-        &print_update,
-        &print_notification,
-        &print_keepalive,
-        &print_routerefresh,
-    };
-
-    //Valid BGP message types are 1-5 (OPEN through ROUTE_REFRESH)
-    if (msg->type < 1 || msg->type > 5) {
-        return -1;
-    }
-
-    printf("time=%ld name=%s id=%ld type=%s length=%d ", msg->recv_time, msg->peer_name, msg->id, type_string[ msg->type ],  msg->length);
-    dispatch[msg->type - 1](msg);
-
-    return 0;
-}
-
-
 void initialise_output(struct bgp_peer *peer) {
     //No lock needed - called during peer init before thread starts
-    peer->print_msg = print_msg_stdout;
-}
-
-void print_open(struct bgp_msg *msg) {
-    printf(
-        "version=%d, asn=%d, hold_time=%d, router_id=%d, param_len=%d\n",
-        msg->open.version,
-        msg->open.asn,
-        msg->open.hold_time,
-        msg->open.router_id,
-        msg->open.opt_param_len
-    );
-
-    //TODO: parameters
-}
-
-void print_pa_origin(struct bgp_path_attribute *pa) {
-    char *origin_string[] = {
-        "IGP",
-        "EGP",
-        "INCOMPLETE"
-    };
-
-    if (pa->origin > 2) {
-        return;
-    }
-
-    printf("origin=%s ", origin_string[ pa->origin ]);
-}
-
-void print_pa_as_path(struct bgp_path_attribute *pa) {
-    struct path_segment *seg;
-    struct list_head *i;
-
-    if (!pa->as_path) {
-        return;
-    }
-
-    printf(
-        "n_as_segments=%d n_total_as=%d ", pa->as_path->n_segments, pa->as_path->n_total_as
-    );
-
-    printf("as_path=\"");
-    list_for_each(i, &pa->as_path->segments) {
-        seg = list_entry(i, struct path_segment, list);
-        for (int x = 0; x < seg->n_as; x++) {
-            printf("%d", seg->as[x]);
-            //No comma on the last entry
-            if (x == seg->n_as - 1) {
-                break;
-            }
-            printf(",");
-        }
-    }
-    printf("\" ");
+    peer->print_msg = print_msg_json;
 }
 
 
@@ -172,121 +87,6 @@ char *ipv4_string(uint32_t ipv4) {
 
 
 
-//This is gross and yuck
-void print_ipv4(uint32_t ipv4) {
-    char *ipv4_str = ipv4_string(ipv4);
-
-    if (!ipv4_str) {
-        return;
-    }
-
-    printf("%s", ipv4_str);
-}
-
-void print_next_hop(struct bgp_path_attribute *pa) {
-    printf("next_hop=");
-    print_ipv4(pa->next_hop);
-    printf(" ");
-}
-
-void print_med(struct bgp_path_attribute *pa) {
-    printf("med=%d ", pa->multi_exit_disc);
-}
-
-void print_local_pref(struct bgp_path_attribute *pa) {
-    printf("local_pref=%d ", pa->local_pref);
-}
-
-void print_atomic_aggregate(struct bgp_path_attribute *pa) {
-    printf("atomic_aggregate=1 ");
-}
-
-void print_aggregator(struct bgp_path_attribute *pa) {
-    if (!pa->aggregator) {
-        return;
-    }
-    printf("aggregator_asn=%d ", pa->aggregator->asn);
-    printf("aggregator_ip=");
-    print_ipv4(pa->aggregator->ip);
-    printf(" ");
-}
-
-
-void print_update(struct bgp_msg *msg) {
-    struct list_head *i;
-    struct ipv4_nlri *nlri;
-
-    //+1 to account for 0 at the start
-    void (*path_attr_dispatch[AGGREGATOR + 1]) (struct bgp_path_attribute *) = {
-        NULL,
-        &print_pa_origin,
-        &print_pa_as_path,
-        &print_next_hop,
-        &print_med,
-        &print_local_pref,
-        &print_atomic_aggregate,
-        &print_aggregator
-    };
-
-
-    //Print withdrawn routes
-    printf(
-        "widthdrawn_route_length=%d withdrawn_routes=\"",
-        msg->update->withdrawn_route_length
-    );
-
-    list_for_each(i, &msg->update->withdrawn_routes) {
-        nlri = list_entry(i, struct ipv4_nlri, list);
-        printf("%s", nlri->string);
-        if (!list_is_last(i, &msg->update->withdrawn_routes)) {
-            printf(",");
-        }
-    }
-    printf("\" ");
-
-
-    //Print path attributes
-    printf(
-        "path_attribute_length=%d ",
-        msg->update->path_attr_length
-    );
-    for (int x = 0; x < AGGREGATOR; x++) {
-        if (!msg->update->path_attrs[x] || !path_attr_dispatch[x]) {
-            continue;
-        }
-
-        path_attr_dispatch[x](msg->update->path_attrs[x]);
-    }
-
-    //Print NLRI
-    printf("nlri=\"");
-    list_for_each(i, &msg->update->nlri) {
-        nlri = list_entry(i, struct ipv4_nlri, list);
-        printf("%s", nlri->string);
-        if (!list_is_last(i, &msg->update->nlri)) {
-            printf(",");
-        }
-    }
-    printf("\"\n");
-}
-
-
-void print_notification(struct bgp_msg *msg) {
-    printf(
-        "code=%d, subcode=%d, data=\n",
-        msg->notification.code,
-        msg->notification.subcode
-    );
-
-}
-
-void print_keepalive(struct bgp_msg *msg) {
-    printf("\n");
-}
-
-void print_routerefresh(struct bgp_msg *msg) {
-
-}
 
 
 /*
@@ -299,7 +99,7 @@ json_t *construct_json_keepalive(struct bgp_msg *);
 json_t *construct_json_routerefresh(struct bgp_msg *);
 
 
-int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
+static int print_msg_json_internal(struct bgp_msg *msg, size_t flags) {
     json_t * (*dispatch[5]) (struct bgp_msg *) = {
         &construct_json_open,
         &construct_json_update,
@@ -323,13 +123,21 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
 
     json_object_set_new( root, "message", dispatch[msg->type - 1](msg) );
 
-    char *json_string = json_dumps(root, JSON_INDENT(2));
-    printf("%s\n", json_string);
+    char *json_str = json_dumps(root, flags);
+    printf("%s\n", json_str);
 
-    free(json_string);
+    free(json_str);
     json_decref(root);
 
     return 0;
+}
+
+int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
+    return print_msg_json_internal(msg, JSON_INDENT(2));
+}
+
+int print_msg_jsonl(struct bgp_peer *peer, struct bgp_msg *msg) {
+    return print_msg_json_internal(msg, JSON_COMPACT);
 }
 
 

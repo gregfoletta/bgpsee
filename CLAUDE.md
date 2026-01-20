@@ -22,7 +22,7 @@ The build produces a `bgpsee` executable in the root directory. There is no `mak
 
 ## Architecture
 
-BGPSee is a multi-threaded BGP client that peers with routers and outputs received BGP messages (OPEN, UPDATE, KEEPALIVE, NOTIFICATION) in JSON or key-value format.
+BGPSee is a multi-threaded BGP client that peers with routers and outputs received BGP messages (OPEN, UPDATE, KEEPALIVE, NOTIFICATION) in JSON or JSON Lines format.
 
 ### Threading Model
 
@@ -37,7 +37,7 @@ BGPSee is a multi-threaded BGP client that peers with routers and outputs receiv
 | `main.c` | Entry point, CLI parsing with getopt_long |
 | `bgp.c` | BGP instance/peer lifecycle, FSM implementation |
 | `bgp_message.c` | BGP protocol message parsing (OPEN, UPDATE, NOTIFICATION, KEEPALIVE, ROUTE-REFRESH) |
-| `bgp_print.c` | Output formatting (JSON via jansson, key-value) |
+| `bgp_print.c` | Output formatting (JSON and JSON Lines via jansson) |
 | `bgp_timers.c` | RFC-compliant timer management using Linux timerfd |
 | `tcp_client.c` | TCP socket connection handling |
 
@@ -68,4 +68,4 @@ FSM functions in `bgp.c`: `fsm_state_idle()`, `fsm_state_connect()`, etc.
 ./bgpsee -f json --asn 65001 10.0.0.1,65011,"Upstream Router"
 ```
 
-Output formats: `json` (default) or `kv` (key-value)
+Output formats: `json` (pretty-printed, default) or `jsonl` (single line per message)

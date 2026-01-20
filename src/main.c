@@ -171,7 +171,7 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
         { 0, 0, 0, 0 }
     };
 
-    char *out_fmts[] = { "kv", "json" };
+    char *out_fmts[] = { "json", "jsonl" };
 
     while (1) {
         c = getopt_long(argc, argv, "s:a:r:l:f:h", cmdline_options, i);
@@ -218,7 +218,7 @@ void print_help(void) {
         "-a, --asn <asn>\t\tLocal ASN of bgpsee. If not provided 65000 will be used.\n"
         "-r, --rid <ip>\t\tLocal router ID of bgpsee. If not provided 1.1.1.1 will be used.\n"
         "-l, --logging <level>\tLogging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug \n"
-        "-f, --format <fmt>\tFormat of the output, <fmt> may be 'json' or 'kv'. Defaults to 'json'\n"
+        "-f, --format <fmt>\tFormat of the output, <fmt> may be 'json' (pretty) or 'jsonl' (single line). Defaults to 'json'\n"
         "-h, --help\t\tPrint this help message\n"
         "\n"
         "<peer> formats: <ip>,<asn> or <ip>,<asn>,<name>\n\n";

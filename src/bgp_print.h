@@ -1,7 +1,7 @@
 //Types of output
 enum bgp_output {
-    BGP_OUT_KV,
     BGP_OUT_JSON,
+    BGP_OUT_JSONL,
     N_BGP_FORMATS
 } ;
 

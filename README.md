@@ -40,8 +40,8 @@ Usage: bgpsee [options...] <peer> [<peer> ...]
 -s, --source <ip>	IP to source BGP connection from
 -a, --asn <asn>		Local ASN of bgpsee. If not provided 65000 will be used.
 -r, --rid <ip>		Local router ID of bgpsee. If not provided 1.1.1.1 will be used.
--l, --logging <level>	Logging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug 
--f, --format <fmt>	Format of the output, <fmt> may be 'json' or 'kv'. Defaults to 'json'
+-l, --logging <level>	Logging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug
+-f, --format <fmt>	Format of the output, <fmt> may be 'json' (pretty) or 'jsonl' (single line). Defaults to 'json'
 -h, --help		Print this help message
 
 <peer> formats: <ip>,<asn> or <ip>,<asn>,<name>
