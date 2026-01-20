@@ -652,21 +652,6 @@ json_t *construct_json_aggregator(struct bgp_path_attribute *attr) {
     return aggregator;
 }
 
-/* Helper to format IPv6 address as string */
-static char *ipv6_string(const uint8_t *addr) {
-    char *str = malloc(48);
-    if (!str) return NULL;
-
-    snprintf(str, 48,
-        "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-        addr[0], addr[1], addr[2], addr[3],
-        addr[4], addr[5], addr[6], addr[7],
-        addr[8], addr[9], addr[10], addr[11],
-        addr[12], addr[13], addr[14], addr[15]);
-
-    return str;
-}
-
 json_t *construct_json_mp_reach(struct bgp_path_attribute *attr) {
     json_t *mp = json_object();
     struct list_head *i;
@@ -680,29 +665,15 @@ json_t *construct_json_mp_reach(struct bgp_path_attribute *attr) {
     json_object_set_new(mp, "safi", json_integer(attr->mp_reach->safi));
     json_object_set_new(mp, "safi_name", json_string(safi_name(attr->mp_reach->safi)));
 
-    /* Format next hop based on length */
-    if (attr->mp_reach->nh_length == 16) {
-        /* Single IPv6 address */
-        char *nh = ipv6_string(attr->mp_reach->next_hop);
-        json_object_set_new(mp, "next_hop", json_string(nh));
-        free(nh);
-    } else if (attr->mp_reach->nh_length == 32) {
-        /* Global + link-local IPv6 addresses */
-        char *nh_global = ipv6_string(attr->mp_reach->next_hop);
-        char *nh_ll = ipv6_string(attr->mp_reach->next_hop + 16);
-        json_object_set_new(mp, "next_hop_global", json_string(nh_global));
-        json_object_set_new(mp, "next_hop_link_local", json_string(nh_ll));
-        free(nh_global);
-        free(nh_ll);
-    } else if (attr->mp_reach->nh_length == 4) {
-        /* IPv4 next hop */
-        uint32_t nh_ipv4 = ((uint32_t)attr->mp_reach->next_hop[0] << 24) |
-                          ((uint32_t)attr->mp_reach->next_hop[1] << 16) |
-                          ((uint32_t)attr->mp_reach->next_hop[2] << 8) |
-                          (uint32_t)attr->mp_reach->next_hop[3];
-        char *nh = ipv4_string(nh_ipv4);
-        json_object_set_new(mp, "next_hop", json_string(nh));
-        free(nh);
+    /* Add next hop - already formatted during parsing */
+    if (attr->mp_reach->nh_string[0]) {
+        if (attr->mp_reach->nh_link_local_string[0]) {
+            /* Dual next hop (global + link-local) */
+            json_object_set_new(mp, "next_hop_global", json_string(attr->mp_reach->nh_string));
+            json_object_set_new(mp, "next_hop_link_local", json_string(attr->mp_reach->nh_link_local_string));
+        } else {
+            json_object_set_new(mp, "next_hop", json_string(attr->mp_reach->nh_string));
+        }
     }
 
     /* NLRI routes */

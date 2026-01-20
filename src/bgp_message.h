@@ -105,6 +105,8 @@ struct mp_reach_nlri {
     uint8_t safi;           /* Subsequent Address Family Identifier */
     uint8_t nh_length;      /* Next Hop length in bytes */
     uint8_t next_hop[32];   /* Next Hop address (up to 32 bytes for IPv6 link-local) */
+    char nh_string[40];     /* Formatted next hop (global) */
+    char nh_link_local_string[40];  /* Formatted link-local next hop (if present) */
     struct list_head nlri;  /* List of ipv6_nlri (or ipv4_nlri depending on AFI) */
 };
 

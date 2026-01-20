@@ -649,6 +649,59 @@ struct ipv4_nlri *parse_ipv4_nlri(unsigned char **body) {
     return nlri;
 }
 
+/*
+ * Format IPv6 address with zero compression (RFC 5952)
+ * - Removes leading zeros in each group
+ * - Replaces longest run of consecutive all-zero groups with ::
+ */
+static void format_ipv6_addr(char *buf, size_t buflen, const uint8_t *addr) {
+    uint16_t groups[8];
+    int i;
+
+    /* Convert bytes to 16-bit groups */
+    for (i = 0; i < 8; i++) {
+        groups[i] = (uint16_t)((addr[i * 2] << 8) | addr[i * 2 + 1]);
+    }
+
+    /* Find longest run of zeros (must be > 1 to compress) */
+    int best_start = -1, best_len = 1;
+    int cur_start = -1, cur_len = 0;
+
+    for (i = 0; i < 8; i++) {
+        if (groups[i] == 0) {
+            if (cur_start == -1) cur_start = i;
+            cur_len++;
+        } else {
+            if (cur_len > best_len) {
+                best_start = cur_start;
+                best_len = cur_len;
+            }
+            cur_start = -1;
+            cur_len = 0;
+        }
+    }
+    if (cur_len > best_len) {
+        best_start = cur_start;
+        best_len = cur_len;
+    }
+
+    /* Build the string */
+    char *p = buf;
+    char *end = buf + buflen;
+
+    for (i = 0; i < 8 && p < end; i++) {
+        if (best_start >= 0 && i == best_start) {
+            p += snprintf(p, (size_t)(end - p), "::");
+            i += best_len - 1;  /* -1 because loop increments */
+        } else {
+            if (i > 0 && !(best_start >= 0 && i == best_start + best_len)) {
+                p += snprintf(p, (size_t)(end - p), ":");
+            }
+            p += snprintf(p, (size_t)(end - p), "%x", groups[i]);
+        }
+    }
+}
+
 struct ipv6_nlri *parse_ipv6_nlri(unsigned char **body) {
     unsigned char **pos = body;
     struct ipv6_nlri *nlri = NULL;
@@ -675,17 +728,10 @@ struct ipv6_nlri *parse_ipv6_nlri(unsigned char **body) {
         nlri->prefix[x] = uchar_to_uint8_inc(pos);
     }
 
-    /* Format IPv6 address string */
-    snprintf(
-        nlri->string,
-        MAX_IPV6_ROUTE_STRING,
-        "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x/%d",
-        nlri->prefix[0], nlri->prefix[1], nlri->prefix[2], nlri->prefix[3],
-        nlri->prefix[4], nlri->prefix[5], nlri->prefix[6], nlri->prefix[7],
-        nlri->prefix[8], nlri->prefix[9], nlri->prefix[10], nlri->prefix[11],
-        nlri->prefix[12], nlri->prefix[13], nlri->prefix[14], nlri->prefix[15],
-        nlri->length
-    );
+    /* Format IPv6 prefix string with zero compression */
+    char addr_part[40];
+    format_ipv6_addr(addr_part, sizeof(addr_part), nlri->prefix);
+    snprintf(nlri->string, MAX_IPV6_ROUTE_STRING, "%s/%d", addr_part, nlri->length);
 
     return nlri;
 }
@@ -725,6 +771,24 @@ struct mp_reach_nlri *parse_mp_reach_nlri(unsigned char **body, uint16_t attr_le
     memset(mp->next_hop, 0, sizeof(mp->next_hop));
     memcpy(mp->next_hop, *pos, mp->nh_length);
     *pos += mp->nh_length;
+
+    /* Format next hop string(s) */
+    mp->nh_string[0] = '\0';
+    mp->nh_link_local_string[0] = '\0';
+    if (mp->nh_length == 16) {
+        /* Single IPv6 address */
+        format_ipv6_addr(mp->nh_string, sizeof(mp->nh_string), mp->next_hop);
+    } else if (mp->nh_length == 32) {
+        /* Global + link-local IPv6 addresses */
+        format_ipv6_addr(mp->nh_string, sizeof(mp->nh_string), mp->next_hop);
+        format_ipv6_addr(mp->nh_link_local_string, sizeof(mp->nh_link_local_string),
+                         mp->next_hop + 16);
+    } else if (mp->nh_length == 4) {
+        /* IPv4 next hop */
+        snprintf(mp->nh_string, sizeof(mp->nh_string), "%d.%d.%d.%d",
+                 mp->next_hop[0], mp->next_hop[1],
+                 mp->next_hop[2], mp->next_hop[3]);
+    }
 
     /* Skip reserved byte */
     (*pos)++;
