@@ -54,6 +54,103 @@ ssize_t queue_and_send_notification(struct bgp_peer *peer, uint8_t code, uint8_t
 
 //End Non-public functions
 
+/*
+    ================================
+
+    Reconnection Helper Functions
+
+    ================================
+*/
+
+/*
+ * classify_failure() - Determine if a failure is retriable
+ *
+ * Returns 1 if the failure is retriable, 0 if non-retriable.
+ *
+ * Retriable failures:
+ *   - TCP connection failure (code=0)
+ *   - Hold timer expired
+ *   - CEASE/Admin Shutdown
+ *   - CEASE/Admin Reset
+ *   - CEASE/Connection Rejected
+ *
+ * Non-retriable failures (typically config errors):
+ *   - Version mismatch (OPEN error)
+ *   - Bad peer AS (OPEN error)
+ *   - Unacceptable hold time
+ *   - Peer de-configured
+ */
+int classify_failure(uint8_t code, uint8_t subcode) {
+    // TCP failure (no NOTIFICATION received)
+    if (code == 0) {
+        return 1;
+    }
+
+    // Hold timer expired - retriable
+    if (code == BGP_ERR_HOLD_TIMER) {
+        return 1;
+    }
+
+    // FSM error - retriable
+    if (code == BGP_ERR_FSM) {
+        return 1;
+    }
+
+    // CEASE errors - check subcode
+    if (code == BGP_ERR_CEASE) {
+        switch (subcode) {
+            case BGP_ERR_CEASE_ADMIN_SHUT:   // Administrative Shutdown
+            case BGP_ERR_CEASE_ADMIN_RESET:  // Administrative Reset
+            case BGP_ERR_CEASE_CONN_REJECT:  // Connection Rejected
+            case BGP_ERR_CEASE_CONFIG_CHG:   // Other Configuration Change
+            case BGP_ERR_CEASE_COLLISION:    // Connection Collision
+            case BGP_ERR_CEASE_RESOURCES:    // Out of Resources
+                return 1;
+            case BGP_ERR_CEASE_PEER_DECONF:  // Peer De-configured - non-retriable
+            case BGP_ERR_CEASE_MAX_PREFIX:   // Max prefixes - non-retriable
+            default:
+                return 0;
+        }
+    }
+
+    // OPEN errors - typically configuration problems, non-retriable
+    if (code == BGP_ERR_OPEN) {
+        return 0;
+    }
+
+    // Header and UPDATE errors - non-retriable (protocol problems)
+    return 0;
+}
+
+/*
+ * calculate_next_backoff() - Double the current backoff up to max
+ */
+void calculate_next_backoff(struct bgp_peer *peer) {
+    uint16_t next = peer->reconnect_backoff_current * 2;
+    if (next > peer->reconnect_backoff_max) {
+        next = peer->reconnect_backoff_max;
+    }
+    peer->reconnect_backoff_current = next;
+}
+
+/*
+ * reset_backoff() - Reset backoff to initial value (5s)
+ */
+void reset_backoff(struct bgp_peer *peer) {
+    peer->reconnect_backoff_current = 5;
+}
+
+/*
+ * setup_reconnect_timer() - Arm IdleHoldTimer with current backoff value
+ */
+int setup_reconnect_timer(struct bgp_peer *peer) {
+    peer->local_timers[IdleHoldTimer].timeout.it_value.tv_sec = peer->reconnect_backoff_current;
+    peer->local_timers[IdleHoldTimer].timeout.it_value.tv_nsec = 0;
+    peer->local_timers[IdleHoldTimer].timeout.it_interval.tv_sec = 0;
+    peer->local_timers[IdleHoldTimer].timeout.it_interval.tv_nsec = 0;
+    return start_timer(peer->local_timers, IdleHoldTimer);
+}
+
 
 /*
     BGP Instance and peer creation/destruction functions
@@ -160,6 +257,14 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     //Initialise the connect rety counter
     peer->connect_retry_counter = 0;
 
+    //Initialise reconnection settings
+    peer->reconnect_enabled = 0;
+    peer->reconnect_max_retries = 0;
+    peer->reconnect_backoff_current = 5;
+    peer->reconnect_backoff_max = 120;
+    peer->last_notification_code = 0;
+    peer->last_notification_subcode = 0;
+
     //Initialise al statistics to 0
     memset(&peer->stats, 0, sizeof(peer->stats));
 
@@ -217,6 +322,18 @@ int set_bgp_output(struct bgp_instance *i, unsigned int id,  enum bgp_output for
     return    _set_bgp_output(peer, format);
 }
 
+int set_bgp_reconnect(struct bgp_instance *i, unsigned int id, int enabled, int max_retries) {
+    struct bgp_peer *peer;
+
+    if (!(peer = get_peer_from_instance(i, id))) {
+        return -1;
+    }
+
+    peer->reconnect_enabled = enabled;
+    peer->reconnect_max_retries = max_retries;
+
+    return 0;
+}
 
 
 void free_bgp_peer(struct bgp_instance *i, unsigned int id) {
@@ -392,8 +509,10 @@ void *bgp_peer_thread(void *param) {
     struct bgp_peer *peer = param;
     struct bgp_msg *message = NULL;
     fd_set *set;
-    int max_fd, readable_fds, ret;
+    int max_fd, readable_fds, ret = 0;
     struct timeval select_timeout;
+    int waiting_for_reconnect = 0;
+    int was_established = 0;  // Track if we ever reached ESTABLISHED
 
     log_print(LOG_DEBUG, "RW Thread Active\n");
 
@@ -411,9 +530,22 @@ void *bgp_peer_thread(void *param) {
 
         //TODO: handle signals
         readable_fds = select(max_fd + 1, set, NULL, NULL, &select_timeout);
+
+        // Check if IdleHoldTimer fired (reconnection timer)
+        if (waiting_for_reconnect) {
+            if (timer_has_fired(peer->local_timers, IdleHoldTimer, set)) {
+                log_print(LOG_INFO, "Reconnect timer fired, attempting reconnection to %s\n", peer->name);
+                waiting_for_reconnect = 0;
+                peer->fsm_state = IDLE;
+                // Calculate next backoff for potential future retry
+                calculate_next_backoff(peer);
+            }
+            continue;
+        }
+
         /*
             Did we have a timer fire, did we receive a message, or did the underlying TCP
-            stream fail (FIN or RST)? We gather this information and pass it to each of 
+            stream fail (FIN or RST)? We gather this information and pass it to each of
             the state functions.
 
             Currently we only receive the first timer that fired. A TODO is to multiplex
@@ -423,15 +555,17 @@ void *bgp_peer_thread(void *param) {
             log_print(LOG_DEBUG, "select() is readable (FD %d)\n", readable_fds);
 
             //Did we receive messages?
-            if (FD_ISSET(peer->socket.fd, set)) {
+            if (peer->socket.fd >= 0 && FD_ISSET(peer->socket.fd, set)) {
                 log_print(LOG_DEBUG, "Calling recv_msg() on socket\n");
                 message = recv_msg(peer->socket.fd);
 
                 if (!message) {
-                    log_print(LOG_ERROR, "recv_msg() errored, exiting\n");
+                    log_print(LOG_ERROR, "recv_msg() errored\n");
                     bgp_close_socket(peer);
                     peer->fsm_state = IDLE;
-                    goto error;
+                    peer->last_notification_code = 0;
+                    peer->last_notification_subcode = 0;
+                    goto handle_failure;
                 }
 
                 //Update peer-related fields
@@ -443,25 +577,27 @@ void *bgp_peer_thread(void *param) {
                 list_add_tail(&message->output, &peer->output_q);
             }
         } else if (readable_fds < 0) {
-            log_print(LOG_ERROR, "select() error, peer thread returning\n");
-            goto error;
+            log_print(LOG_ERROR, "select() error\n");
+            peer->last_notification_code = 0;
+            peer->last_notification_subcode = 0;
+            goto handle_failure;
         }
 
-        /* 
+        /*
             Each FSM is passed the results from select(), and bears its own responsibility
             for reading in socket data, or dealing with timers that may have expired
         */
         switch(peer->fsm_state) {
-            case IDLE: 
+            case IDLE:
                 ret = fsm_state_idle(peer, set);
                 break;
-            case CONNECT: 
+            case CONNECT:
                 ret = fsm_state_connect(peer);
                 break;
-            case ACTIVE: 
+            case ACTIVE:
                 ret = fsm_state_active(peer);
                 break;
-            case OPENSENT: 
+            case OPENSENT:
                 ret = fsm_state_opensent(peer, message, set);
                 break;
             case OPENCONFIRM:
@@ -475,13 +611,65 @@ void *bgp_peer_thread(void *param) {
         }
 
         if (ret < 0) {
-            goto error;
+            goto handle_failure;
+        }
+
+        // Reset backoff when we reach ESTABLISHED state
+        if (peer->fsm_state == ESTABLISHED && !was_established) {
+            was_established = 1;
+            if (peer->connect_retry_counter > 0) {
+                log_print(LOG_INFO, "Session established with %s, resetting backoff\n", peer->name);
+                reset_backoff(peer);
+                peer->connect_retry_counter = 0;
+            }
+        } else if (peer->fsm_state != ESTABLISHED) {
+            was_established = 0;
         }
 
         //Output and garbage collect the messages
         //TODO: The garbage collection and the printing need to be decoupled. There's an issue
         //if the socket is RST before actioning, then the message doesn't get printed.
         print_bgp_msg_and_gc(peer);
+        continue;
+
+    handle_failure:
+        // Print any pending messages before handling failure
+        print_bgp_msg_and_gc(peer);
+
+        // Check if reconnection is enabled and failure is retriable
+        if (peer->reconnect_enabled) {
+            int retriable = classify_failure(peer->last_notification_code, peer->last_notification_subcode);
+
+            if (retriable) {
+                // Check max retries
+                if (peer->reconnect_max_retries == 0 ||
+                    peer->connect_retry_counter < (unsigned int)peer->reconnect_max_retries) {
+
+                    peer->connect_retry_counter++;
+                    log_print(LOG_INFO, "Reconnecting to %s in %ds (attempt %d%s)\n",
+                        peer->name,
+                        peer->reconnect_backoff_current,
+                        peer->connect_retry_counter,
+                        peer->reconnect_max_retries > 0 ? "" : ", unlimited");
+
+                    setup_reconnect_timer(peer);
+                    waiting_for_reconnect = 1;
+                    was_established = 0;
+                    continue;
+                } else {
+                    log_print(LOG_ERROR, "Max retries (%d) reached for peer %s, giving up\n",
+                        peer->reconnect_max_retries, peer->name);
+                    goto exit_thread;
+                }
+            } else {
+                log_print(LOG_ERROR, "Non-retriable failure (code=%d, subcode=%d) for peer %s\n",
+                    peer->last_notification_code, peer->last_notification_subcode, peer->name);
+                goto exit_thread;
+            }
+        } else {
+            // Reconnection disabled, exit
+            goto exit_thread;
+        }
     }
 
     //Graceful shutdown: send CEASE notification if socket is still open
@@ -492,7 +680,12 @@ void *bgp_peer_thread(void *param) {
         bgp_close_socket(peer);
     }
 
-    error:
+exit_thread:
+    // Disarm reconnect timer if waiting
+    if (waiting_for_reconnect) {
+        disarm_timer(peer->local_timers, IdleHoldTimer);
+    }
+
     free(set);
     msg_queue_gc(&peer->output_q);
 
@@ -534,6 +727,9 @@ int fsm_state_idle(struct bgp_peer *peer, fd_set *set) {
     if (peer->socket.fd < 0) {
         log_print(LOG_DEBUG, "TCP connection to %s failed\n", peer->peer_ip);
         bgp_close_socket(peer);
+        // TCP failure - no NOTIFICATION
+        peer->last_notification_code = 0;
+        peer->last_notification_subcode = 0;
         return -1;
         //Update timer
     } else {
@@ -591,6 +787,8 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
         disarm_timer(peer->local_timers, ConnectRetryTimer);
         bgp_close_socket(peer);
         peer->fsm_state = IDLE;
+        peer->last_notification_code = BGP_ERR_HOLD_TIMER;
+        peer->last_notification_subcode = 0;
         return -1;
     }
 
@@ -609,6 +807,8 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
                 queue_and_send_notification(peer, BGP_ERR_OPEN, BGP_ERR_OPEN_PEER_AS);
                 bgp_close_socket(peer);
                 peer->fsm_state = IDLE;
+                peer->last_notification_code = BGP_ERR_OPEN;
+                peer->last_notification_subcode = BGP_ERR_OPEN_PEER_AS;
                 return -1;
             }
 
@@ -619,6 +819,8 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
                 queue_and_send_notification(peer, BGP_ERR_OPEN, BGP_ERR_OPEN_VERSION);
                 bgp_close_socket(peer);
                 peer->fsm_state = IDLE;
+                peer->last_notification_code = BGP_ERR_OPEN;
+                peer->last_notification_subcode = BGP_ERR_OPEN_VERSION;
                 return -1;
             }
 
@@ -629,6 +831,8 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
                 queue_and_send_notification(peer, BGP_ERR_OPEN, BGP_ERR_OPEN_HOLD_TIME);
                 bgp_close_socket(peer);
                 peer->fsm_state = IDLE;
+                peer->last_notification_code = BGP_ERR_OPEN;
+                peer->last_notification_subcode = BGP_ERR_OPEN_HOLD_TIME;
                 return -1;
             }
 
@@ -646,12 +850,15 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
                 peer->name, message->notification.code, message->notification.subcode);
             bgp_close_socket(peer);
             peer->fsm_state = IDLE;
+            peer->last_notification_code = message->notification.code;
+            peer->last_notification_subcode = message->notification.subcode;
             return -1;
         }
     }
 
     return 0;
 }
+
 int fsm_state_openconfirm(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) {
     struct bgp_msg *message;
     log_print(LOG_DEBUG, "Peer %s FSM state: OPENCONFIRM\n", peer->name);
@@ -662,6 +869,8 @@ int fsm_state_openconfirm(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
         queue_and_send_notification(peer, BGP_ERR_HOLD_TIMER, 0);
         bgp_close_socket(peer);
         peer->fsm_state = IDLE;
+        peer->last_notification_code = BGP_ERR_HOLD_TIMER;
+        peer->last_notification_subcode = 0;
         return -1;
     }
 
@@ -683,6 +892,8 @@ int fsm_state_openconfirm(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
                 peer->name, message->notification.code, message->notification.subcode);
             bgp_close_socket(peer);
             peer->fsm_state = IDLE;
+            peer->last_notification_code = message->notification.code;
+            peer->last_notification_subcode = message->notification.subcode;
             return -1;
         }
     }
@@ -700,6 +911,8 @@ int fsm_state_established(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
         queue_and_send_notification(peer, BGP_ERR_HOLD_TIMER, 0);
         bgp_close_socket(peer);
         peer->fsm_state = IDLE;
+        peer->last_notification_code = BGP_ERR_HOLD_TIMER;
+        peer->last_notification_subcode = 0;
         return -1;
     }
 
@@ -722,6 +935,8 @@ int fsm_state_established(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
                     peer->name, message->notification.code, message->notification.subcode);
                 bgp_close_socket(peer);
                 peer->fsm_state = IDLE;
+                peer->last_notification_code = message->notification.code;
+                peer->last_notification_subcode = message->notification.subcode;
                 return -1;
             case UPDATE:
                 //UPDATE messages are printed but don't require specific FSM action

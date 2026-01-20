@@ -73,6 +73,14 @@ struct bgp_peer {
     enum bgp_fsm_states fsm_state;
     unsigned int connect_retry_counter;
 
+    // Reconnection settings
+    int reconnect_enabled;              // 0 = disabled (default)
+    int reconnect_max_retries;          // 0 = infinite
+    uint16_t reconnect_backoff_current; // Current delay in seconds (starts at 5s)
+    uint16_t reconnect_backoff_max;     // Cap at 120s
+    uint8_t last_notification_code;     // For failure classification
+    uint8_t last_notification_subcode;
+
     struct bgp_socket socket;
     struct bgp_stats stats;
 
