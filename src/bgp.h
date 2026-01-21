@@ -20,6 +20,7 @@ unsigned int create_bgp_peer(struct bgp_instance *, const char *, const uint16_t
 unsigned int bgp_peer_source(struct bgp_instance *, unsigned int, const char *);
 
 int set_bgp_output(struct bgp_instance *, unsigned int, enum bgp_output);
+int set_bgp_reconnect(struct bgp_instance *, unsigned int, int enabled, int max_retries);
 
 void free_bgp_peer(struct bgp_instance *, unsigned int);
 void free_all_bgp_peers(struct bgp_instance *);

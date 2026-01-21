@@ -26,6 +26,8 @@ struct cmdline_opts {
     uint16_t local_asn;
     uint32_t local_rid;
     enum bgp_output format;
+    int reconnect_enabled;
+    int reconnect_max_retries;
     int _error;
 };
 
@@ -96,6 +98,8 @@ int main(int argc, char **argv) {
         bgp_peer_source(bgp_i, bgp_peer_id, options.source_ip);
         //Set the logging output (global for all peers)
         set_bgp_output(bgp_i, bgp_peer_id, options.format);
+        //Set reconnection settings
+        set_bgp_reconnect(bgp_i, bgp_peer_id, options.reconnect_enabled, options.reconnect_max_retries);
 
         bgp_peer_ids[ bgp_peer_id ] = 1;
 
@@ -148,6 +152,8 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
         .local_asn = 65000,
         .local_rid = 0x01010101,
         .format = BGP_OUT_JSON,
+        .reconnect_enabled = 0,
+        .reconnect_max_retries = 0,
         .name = calloc(MAX_PEER_NAME_LEN, sizeof(char)),
         ._error = 0
     };
@@ -167,14 +173,16 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
         { "rid", required_argument, 0, 'r' },
         { "logging", required_argument, 0, 'l'},
         { "format", required_argument, 0, 'f'},
+        { "reconnect", no_argument, NULL, 'R'},
+        { "max-retries", required_argument, NULL, 'm'},
         { "help", no_argument, NULL, 'h'},
         { 0, 0, 0, 0 }
     };
 
-    char *out_fmts[] = { "kv", "json" };
+    char *out_fmts[] = { "json", "jsonl" };
 
     while (1) {
-        c = getopt_long(argc, argv, "s:a:r:l:f:h", cmdline_options, i);
+        c = getopt_long(argc, argv, "s:a:r:l:f:Rm:h", cmdline_options, i);
 
         if (c == -1) {
             break;
@@ -205,6 +213,12 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
                     }
                 }
                 break;
+            case 'R':
+                option_return.reconnect_enabled = 1;
+                break;
+            case 'm':
+                option_return.reconnect_max_retries = (int) strtol(optarg, NULL, 10);
+                break;
         }
     }
 
@@ -218,7 +232,9 @@ void print_help(void) {
         "-a, --asn <asn>\t\tLocal ASN of bgpsee. If not provided 65000 will be used.\n"
         "-r, --rid <ip>\t\tLocal router ID of bgpsee. If not provided 1.1.1.1 will be used.\n"
         "-l, --logging <level>\tLogging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug \n"
-        "-f, --format <fmt>\tFormat of the output, <fmt> may be 'json' or 'kv'. Defaults to 'json'\n"
+        "-f, --format <fmt>\tFormat of the output, <fmt> may be 'json' (pretty) or 'jsonl' (single line). Defaults to 'json'\n"
+        "-R, --reconnect\t\tEnable automatic reconnection with exponential backoff\n"
+        "-m, --max-retries <n>\tMaximum reconnection attempts (0 = infinite, default)\n"
         "-h, --help\t\tPrint this help message\n"
         "\n"
         "<peer> formats: <ip>,<asn> or <ip>,<asn>,<name>\n\n";

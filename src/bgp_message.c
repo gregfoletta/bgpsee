@@ -6,6 +6,7 @@
 
 #include "debug.h"
 #include "bgp_message.h"
+#include "bgp_capability.h"
 #include "byte_conv.h"
 #include "list.h"
 #include "log.h"
@@ -171,13 +172,35 @@ exit:
     return message;
 }
 
+struct bgp_msg *alloc_sent_msg(void) {
+    struct bgp_msg *message;
+
+    message = calloc(1, sizeof(*message));
+
+    if (!message) {
+        return NULL;
+    }
+
+    INIT_LIST_HEAD(&message->ingress);
+    INIT_LIST_HEAD(&message->output);
+    message->actioned = 1;  // No FSM processing needed for sent messages
+    message->recv_time = time(NULL);
+
+    return message;
+}
+
 int free_update(struct bgp_update *);
 int free_path_attributes(struct bgp_update *);
 int free_as_path(struct bgp_path_attribute *);
 int free_aggregator(struct bgp_path_attribute *);
+int free_mp_reach(struct bgp_path_attribute *);
+int free_mp_unreach(struct bgp_path_attribute *);
 
 int free_msg(struct bgp_msg *message) {
     switch (message->type) {
+        case OPEN:
+            bgp_capabilities_free(message->open.capabilities);
+            break;
         case UPDATE:
             free_update(message->update);
             break;
@@ -219,6 +242,8 @@ int free_path_attributes(struct bgp_update *update) {
 
     pa_free_dispatch[AS_PATH] = &free_as_path;
     pa_free_dispatch[AGGREGATOR] = &free_aggregator;
+    pa_free_dispatch[MP_REACH_NLRI] = &free_mp_reach;
+    pa_free_dispatch[MP_UNREACH_NLRI] = &free_mp_unreach;
 
     //Note the <=
     for (int attr = ORIGIN; attr <= MAX_ATTRIBUTE; attr++) {
@@ -257,11 +282,45 @@ int free_as_path(struct bgp_path_attribute *attribute) {
 
 
 int free_aggregator(struct bgp_path_attribute *attribute) {
-    free(attribute->aggregator); 
+    free(attribute->aggregator);
 
     return 0;
 }
-    
+
+int free_mp_reach(struct bgp_path_attribute *attribute) {
+    struct list_head *i, *tmp;
+
+    if (!attribute->mp_reach) {
+        return 0;
+    }
+
+    /* Free NLRI list - entries could be ipv4_nlri or ipv6_nlri depending on AFI */
+    list_for_each_safe(i, tmp, &attribute->mp_reach->nlri) {
+        list_del(i);
+        /* Both ipv4_nlri and ipv6_nlri have list as first member after length/bytes/prefix */
+        free(list_entry(i, struct ipv6_nlri, list));
+    }
+
+    free(attribute->mp_reach);
+    return 0;
+}
+
+int free_mp_unreach(struct bgp_path_attribute *attribute) {
+    struct list_head *i, *tmp;
+
+    if (!attribute->mp_unreach) {
+        return 0;
+    }
+
+    /* Free withdrawn routes list */
+    list_for_each_safe(i, tmp, &attribute->mp_unreach->withdrawn) {
+        list_del(i);
+        free(list_entry(i, struct ipv6_nlri, list));
+    }
+
+    free(attribute->mp_unreach);
+    return 0;
+}
 
 
 int validate_header(unsigned char *header, struct bgp_msg *message) {
@@ -338,16 +397,21 @@ int parse_open(struct bgp_msg *message, unsigned char *body) {
         message->open.router_id,
         message->open.opt_param_len
     );
-        
-    //TODO: OPEN message checks
+
+    /* Parse optional parameters (capabilities) */
+    message->open.capabilities = bgp_capabilities_parse(body, message->open.opt_param_len);
 
     return 0;
 }
 
 
-ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time, uint32_t router_id) {
+ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time,
+                  uint32_t router_id, const struct bgp_capabilities *caps) {
     unsigned char message_buffer[BGP_MAX_MESSAGE_SIZE];
     unsigned char *pos;
+    uint8_t opt_param_len = 0;
+    uint16_t total_length;
+    int caps_encoded = 0;
 
     pos = message_buffer + BGP_HEADER_LENGTH;
 
@@ -355,12 +419,30 @@ ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time, uin
     uint16_to_uchar_be_inc(&pos, asn);
     uint16_to_uchar_be_inc(&pos, hold_time);
     uint32_to_uchar_be_inc(&pos, router_id);
-    //TODO: temp opt param length
-    uint8_to_uchar(pos, 0);
 
-    create_header(BGP_OPEN_HEADER_LENGTH, OPEN, message_buffer);
+    /* Reserve space for opt_param_len, we'll fill it in after encoding caps */
+    unsigned char *opt_param_len_pos = pos;
+    pos++;
 
-    return send(fd, message_buffer, BGP_OPEN_HEADER_LENGTH, 0);
+    /* Encode capabilities if provided */
+    if (caps && caps->count > 0) {
+        size_t remaining = BGP_MAX_MESSAGE_SIZE - (size_t)(pos - message_buffer);
+        caps_encoded = bgp_capabilities_encode(caps, pos, remaining);
+        if (caps_encoded > 0) {
+            opt_param_len = (uint8_t)caps_encoded;
+            pos += caps_encoded;
+        }
+    }
+
+    /* Write the opt_param_len */
+    uint8_to_uchar(opt_param_len_pos, opt_param_len);
+
+    /* Calculate total message length */
+    total_length = (uint16_t)(pos - message_buffer);
+
+    create_header(total_length, OPEN, message_buffer);
+
+    return send(fd, message_buffer, total_length, 0);
 }
 
 
@@ -462,7 +544,9 @@ struct aggregator *parse_update_aggregator(unsigned char **body) {
     return agg;
 }
 
-
+/* Forward declarations for MP_REACH/UNREACH parsing */
+struct mp_reach_nlri *parse_mp_reach_nlri(unsigned char **body, uint16_t attr_length);
+struct mp_unreach_nlri *parse_mp_unreach_nlri(unsigned char **body, uint16_t attr_length);
 
 struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
     unsigned char **pos = body;
@@ -509,6 +593,16 @@ struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
         case AGGREGATOR:
             attr->aggregator = parse_update_aggregator(pos);
             break;
+        case MP_REACH_NLRI:
+            if (attr->length > 0) {
+                attr->mp_reach = parse_mp_reach_nlri(pos, attr->length);
+            }
+            break;
+        case MP_UNREACH_NLRI:
+            if (attr->length > 0) {
+                attr->mp_unreach = parse_mp_unreach_nlri(pos, attr->length);
+            }
+            break;
         default:
             //Skip over the top of the attribute
             *pos += attr->length;
@@ -553,6 +647,220 @@ struct ipv4_nlri *parse_ipv4_nlri(unsigned char **body) {
 
 
     return nlri;
+}
+
+/*
+ * Format IPv6 address with zero compression (RFC 5952)
+ * - Removes leading zeros in each group
+ * - Replaces longest run of consecutive all-zero groups with ::
+ */
+static void format_ipv6_addr(char *buf, size_t buflen, const uint8_t *addr) {
+    uint16_t groups[8];
+    int i;
+
+    /* Convert bytes to 16-bit groups */
+    for (i = 0; i < 8; i++) {
+        groups[i] = (uint16_t)((addr[i * 2] << 8) | addr[i * 2 + 1]);
+    }
+
+    /* Find longest run of zeros (must be > 1 to compress) */
+    int best_start = -1, best_len = 1;
+    int cur_start = -1, cur_len = 0;
+
+    for (i = 0; i < 8; i++) {
+        if (groups[i] == 0) {
+            if (cur_start == -1) cur_start = i;
+            cur_len++;
+        } else {
+            if (cur_len > best_len) {
+                best_start = cur_start;
+                best_len = cur_len;
+            }
+            cur_start = -1;
+            cur_len = 0;
+        }
+    }
+    if (cur_len > best_len) {
+        best_start = cur_start;
+        best_len = cur_len;
+    }
+
+    /* Build the string */
+    char *p = buf;
+    char *end = buf + buflen;
+
+    for (i = 0; i < 8 && p < end; i++) {
+        if (best_start >= 0 && i == best_start) {
+            p += snprintf(p, (size_t)(end - p), "::");
+            i += best_len - 1;  /* -1 because loop increments */
+        } else {
+            if (i > 0 && !(best_start >= 0 && i == best_start + best_len)) {
+                p += snprintf(p, (size_t)(end - p), ":");
+            }
+            p += snprintf(p, (size_t)(end - p), "%x", groups[i]);
+        }
+    }
+}
+
+struct ipv6_nlri *parse_ipv6_nlri(unsigned char **body) {
+    unsigned char **pos = body;
+    struct ipv6_nlri *nlri = NULL;
+
+    nlri = calloc(1, sizeof(*nlri));
+    if (!nlri) {
+        return NULL;
+    }
+
+    INIT_LIST_HEAD(&nlri->list);
+
+    nlri->length = uchar_to_uint8_inc(pos);
+    /* ceil(length / 8) */
+    nlri->bytes = (uint8_t)((nlri->length + 7) / 8);
+
+    /* IPv6 prefix cannot exceed 128 bits (16 bytes) */
+    if (nlri->bytes > 16) {
+        free(nlri);
+        return NULL;
+    }
+
+    memset(nlri->prefix, 0, sizeof(nlri->prefix));
+    for (int x = 0; x < nlri->bytes; x++) {
+        nlri->prefix[x] = uchar_to_uint8_inc(pos);
+    }
+
+    /* Format IPv6 prefix string with zero compression */
+    char addr_part[40];
+    format_ipv6_addr(addr_part, sizeof(addr_part), nlri->prefix);
+    snprintf(nlri->string, MAX_IPV6_ROUTE_STRING, "%s/%d", addr_part, nlri->length);
+
+    return nlri;
+}
+
+/*
+ * Parse MP_REACH_NLRI attribute (type 14) - RFC 4760
+ * Format:
+ *   AFI (2) + SAFI (1) + NH_Len (1) + Next_Hop (variable) + Reserved (1) + NLRI (variable)
+ */
+struct mp_reach_nlri *parse_mp_reach_nlri(unsigned char **body, uint16_t attr_length) {
+    unsigned char **pos = body;
+    unsigned char *end = *body + attr_length;
+    struct mp_reach_nlri *mp;
+
+    if (attr_length < 5) {  /* Minimum: AFI(2) + SAFI(1) + NH_Len(1) + Reserved(1) */
+        return NULL;
+    }
+
+    mp = calloc(1, sizeof(*mp));
+    if (!mp) {
+        return NULL;
+    }
+
+    INIT_LIST_HEAD(&mp->nlri);
+
+    mp->afi = uchar_be_to_uint16_inc(pos);
+    mp->safi = uchar_to_uint8_inc(pos);
+    mp->nh_length = uchar_to_uint8_inc(pos);
+
+    /* Validate next hop length */
+    if (mp->nh_length > 32 || *pos + mp->nh_length + 1 > end) {
+        free(mp);
+        return NULL;
+    }
+
+    /* Copy next hop */
+    memset(mp->next_hop, 0, sizeof(mp->next_hop));
+    memcpy(mp->next_hop, *pos, mp->nh_length);
+    *pos += mp->nh_length;
+
+    /* Format next hop string(s) */
+    mp->nh_string[0] = '\0';
+    mp->nh_link_local_string[0] = '\0';
+    if (mp->nh_length == 16) {
+        /* Single IPv6 address */
+        format_ipv6_addr(mp->nh_string, sizeof(mp->nh_string), mp->next_hop);
+    } else if (mp->nh_length == 32) {
+        /* Global + link-local IPv6 addresses */
+        format_ipv6_addr(mp->nh_string, sizeof(mp->nh_string), mp->next_hop);
+        format_ipv6_addr(mp->nh_link_local_string, sizeof(mp->nh_link_local_string),
+                         mp->next_hop + 16);
+    } else if (mp->nh_length == 4) {
+        /* IPv4 next hop */
+        snprintf(mp->nh_string, sizeof(mp->nh_string), "%d.%d.%d.%d",
+                 mp->next_hop[0], mp->next_hop[1],
+                 mp->next_hop[2], mp->next_hop[3]);
+    }
+
+    /* Skip reserved byte */
+    (*pos)++;
+
+    /* Parse NLRI based on AFI */
+    while (*pos < end) {
+        if (mp->afi == 2) {  /* IPv6 */
+            struct ipv6_nlri *nlri = parse_ipv6_nlri(pos);
+            if (!nlri) {
+                break;
+            }
+            list_add_tail(&nlri->list, &mp->nlri);
+        } else if (mp->afi == 1) {  /* IPv4 */
+            struct ipv4_nlri *nlri = parse_ipv4_nlri(pos);
+            if (!nlri) {
+                break;
+            }
+            list_add_tail(&nlri->list, &mp->nlri);
+        } else {
+            /* Unknown AFI, skip remaining */
+            break;
+        }
+    }
+
+    return mp;
+}
+
+/*
+ * Parse MP_UNREACH_NLRI attribute (type 15) - RFC 4760
+ * Format:
+ *   AFI (2) + SAFI (1) + Withdrawn_Routes (variable)
+ */
+struct mp_unreach_nlri *parse_mp_unreach_nlri(unsigned char **body, uint16_t attr_length) {
+    unsigned char **pos = body;
+    unsigned char *end = *body + attr_length;
+    struct mp_unreach_nlri *mp;
+
+    if (attr_length < 3) {  /* Minimum: AFI(2) + SAFI(1) */
+        return NULL;
+    }
+
+    mp = calloc(1, sizeof(*mp));
+    if (!mp) {
+        return NULL;
+    }
+
+    INIT_LIST_HEAD(&mp->withdrawn);
+
+    mp->afi = uchar_be_to_uint16_inc(pos);
+    mp->safi = uchar_to_uint8_inc(pos);
+
+    /* Parse withdrawn routes based on AFI */
+    while (*pos < end) {
+        if (mp->afi == 2) {  /* IPv6 */
+            struct ipv6_nlri *nlri = parse_ipv6_nlri(pos);
+            if (!nlri) {
+                break;
+            }
+            list_add_tail(&nlri->list, &mp->withdrawn);
+        } else if (mp->afi == 1) {  /* IPv4 */
+            struct ipv4_nlri *nlri = parse_ipv4_nlri(pos);
+            if (!nlri) {
+                break;
+            }
+            list_add_tail(&nlri->list, &mp->withdrawn);
+        } else {
+            /* Unknown AFI, skip remaining */
+            break;
+        }
+    }
+
+    return mp;
 }
 
 

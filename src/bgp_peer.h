@@ -6,12 +6,14 @@
 
 
 #include "bgp_timers.h"
+#include "bgp_print.h"
 #include "list.h"
 #include "tcp_client.h"
 #include "sds.h"
 
 
 struct bgp_msg;
+struct output_queue;
 
 enum bgp_fsm_states { 
     IDLE, 
@@ -43,6 +45,7 @@ struct bgp_peer_timers {
 
 struct bgp_stats {
     int total;
+    int sent_total;  // Counter for sent messages (used for negative IDs)
     int open[2];
     int update[2];
     int notification[2];
@@ -72,12 +75,22 @@ struct bgp_peer {
     enum bgp_fsm_states fsm_state;
     unsigned int connect_retry_counter;
 
+    // Reconnection settings
+    int reconnect_enabled;              // 0 = disabled (default)
+    int reconnect_max_retries;          // 0 = infinite
+    uint16_t reconnect_backoff_current; // Current delay in seconds (starts at 5s)
+    uint16_t reconnect_backoff_max;     // Cap at 120s
+    uint8_t last_notification_code;     // For failure classification
+    uint8_t last_notification_subcode;
+
     struct bgp_socket socket;
     struct bgp_stats stats;
 
     //Printing
     pthread_mutex_t stdout_lock;
     int (*print_msg)(struct bgp_peer *, struct bgp_msg *);
+    enum bgp_output output_format;
+    struct output_queue *output_queue;
 
     //Ingress message queue
     struct list_head ingress_q;
