@@ -76,9 +76,9 @@ int start_timer_recurring(struct bgp_local_timer *timers, enum timer timer_id) {
     return 0;
 }
 
-int disarm_timer(struct bgp_local_timer *timers, enum timer timer_id) { 
+int disarm_timer(struct bgp_local_timer *timers, enum timer timer_id) {
     struct bgp_local_timer *t;
-    //TODO: confirm passing a stack variable is safe 
+    //TODO: confirm passing a stack variable is safe
     static struct itimerspec disarm_timer = { .it_value = { .tv_sec = 0, }};
 
     if (is_invalid_timer(timer_id)) {
@@ -92,6 +92,17 @@ int disarm_timer(struct bgp_local_timer *timers, enum timer timer_id) {
     }
 
     return 0;
+}
+
+void set_timer_value(struct bgp_local_timer *timers, enum timer timer_id, time_t seconds) {
+    if (is_invalid_timer(timer_id)) {
+        return;
+    }
+
+    timers[timer_id].timeout.it_value.tv_sec = seconds;
+    timers[timer_id].timeout.it_value.tv_nsec = 0;
+    timers[timer_id].timeout.it_interval.tv_sec = 0;
+    timers[timer_id].timeout.it_interval.tv_nsec = 0;
 }
 
 

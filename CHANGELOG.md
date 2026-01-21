@@ -1,4 +1,11 @@
 # Change Log
+- 0.0.7
+    - Added automatic reconnection with exponential backoff (`-R` flag)
+    - Added output queue with dedicated writer thread to prevent keepalive stalls on slow stdout
+    - Fixed FSM race condition where KEEPALIVE arriving with timer expiry caused false hold timer failures
+    - Added hold time negotiation per RFC 4271 (uses min of local and peer hold times)
+    - HoldTimer now correctly reset on UPDATE messages per RFC 4271
+
 - 0.0.6
     - Added IPv6 support with MP_REACH_NLRI and MP_UNREACH_NLRI parsing (RFC 4760)
     - IPv6 addresses formatted with zero compression (RFC 5952)

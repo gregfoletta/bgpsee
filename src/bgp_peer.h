@@ -6,12 +6,14 @@
 
 
 #include "bgp_timers.h"
+#include "bgp_print.h"
 #include "list.h"
 #include "tcp_client.h"
 #include "sds.h"
 
 
 struct bgp_msg;
+struct output_queue;
 
 enum bgp_fsm_states { 
     IDLE, 
@@ -87,6 +89,8 @@ struct bgp_peer {
     //Printing
     pthread_mutex_t stdout_lock;
     int (*print_msg)(struct bgp_peer *, struct bgp_msg *);
+    enum bgp_output output_format;
+    struct output_queue *output_queue;
 
     //Ingress message queue
     struct list_head ingress_q;

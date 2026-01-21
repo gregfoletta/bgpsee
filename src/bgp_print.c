@@ -34,9 +34,11 @@ int _set_bgp_output(struct bgp_peer *peer, enum bgp_output format) {
     switch (format) {
         case BGP_OUT_JSON:
             peer->print_msg = print_msg_json;
+            peer->output_format = BGP_OUT_JSON;
             break;
         case BGP_OUT_JSONL:
             peer->print_msg = print_msg_jsonl;
+            peer->output_format = BGP_OUT_JSONL;
             break;
         default:
             return -2;
@@ -48,6 +50,7 @@ int _set_bgp_output(struct bgp_peer *peer, enum bgp_output format) {
 void initialise_output(struct bgp_peer *peer) {
     //No lock needed - called during peer init before thread starts
     peer->print_msg = print_msg_json;
+    peer->output_format = BGP_OUT_JSON;
 }
 
 
@@ -99,7 +102,12 @@ json_t *construct_json_keepalive(struct bgp_msg *);
 json_t *construct_json_routerefresh(struct bgp_msg *);
 
 
-static int print_msg_json_internal(struct bgp_msg *msg, size_t flags) {
+/*
+ * format_msg_json_internal() - Format a BGP message as JSON string
+ *
+ * Returns a malloc'd string that the caller must free, or NULL on error.
+ */
+static char *format_msg_json_internal(struct bgp_msg *msg, size_t flags) {
     json_t * (*dispatch[5]) (struct bgp_msg *) = {
         &construct_json_open,
         &construct_json_update,
@@ -110,7 +118,7 @@ static int print_msg_json_internal(struct bgp_msg *msg, size_t flags) {
 
     //Valid BGP message types are 1-5 (OPEN through ROUTE_REFRESH)
     if (msg->type < 1 || msg->type > 5) {
-        return -1;
+        return NULL;
     }
 
     json_t *root = json_object();
@@ -124,11 +132,18 @@ static int print_msg_json_internal(struct bgp_msg *msg, size_t flags) {
     json_object_set_new( root, "message", dispatch[msg->type - 1](msg) );
 
     char *json_str = json_dumps(root, flags);
-    printf("%s\n", json_str);
-
-    free(json_str);
     json_decref(root);
 
+    return json_str;
+}
+
+static int print_msg_json_internal(struct bgp_msg *msg, size_t flags) {
+    char *json_str = format_msg_json_internal(msg, flags);
+    if (!json_str) {
+        return -1;
+    }
+    printf("%s\n", json_str);
+    free(json_str);
     return 0;
 }
 
@@ -138,6 +153,17 @@ int print_msg_json(struct bgp_peer *peer, struct bgp_msg *msg) {
 
 int print_msg_jsonl(struct bgp_peer *peer, struct bgp_msg *msg) {
     return print_msg_json_internal(msg, JSON_COMPACT);
+}
+
+/*
+ * Format functions - return malloc'd string, caller must free
+ */
+char *format_msg_json(struct bgp_msg *msg) {
+    return format_msg_json_internal(msg, JSON_INDENT(2));
+}
+
+char *format_msg_jsonl(struct bgp_msg *msg) {
+    return format_msg_json_internal(msg, JSON_COMPACT);
 }
 
 

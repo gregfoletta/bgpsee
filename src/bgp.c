@@ -21,6 +21,7 @@
 #include "log.h"
 #include "tcp_client.h"
 #include "byte_conv.h"
+#include "output_queue.h"
 
 
 struct bgp_instance {
@@ -29,6 +30,7 @@ struct bgp_instance {
     uint32_t local_rid;
     int n_peers;
     struct bgp_peer *peers[MAX_BGP_PEERS];
+    struct output_queue *output_queue;
 };
 
 //Start Non-public functions:
@@ -51,6 +53,9 @@ ssize_t queue_and_send_open(struct bgp_peer *peer, uint8_t version, uint16_t asn
                             struct bgp_capabilities *caps);
 ssize_t queue_and_send_keepalive(struct bgp_peer *peer);
 ssize_t queue_and_send_notification(struct bgp_peer *peer, uint8_t code, uint8_t subcode);
+
+// Returns 1 if hold timer expired (and handles notification/cleanup), 0 otherwise
+int check_hold_timer_expired(struct bgp_peer *peer, fd_set *set, const char *state_name);
 
 //End Non-public functions
 
@@ -173,10 +178,37 @@ struct bgp_instance *create_bgp_instance(uint16_t local_asn, uint32_t local_rid,
     i->local_rid = local_rid;
     i->n_peers = 0;
 
+    /* Initialize output queue */
+    i->output_queue = malloc(sizeof(*i->output_queue));
+    if (!i->output_queue) {
+        log_print(LOG_ERROR, "Failed to allocate output queue\n");
+        free(i);
+        return NULL;
+    }
+
+    if (output_queue_init(i->output_queue) < 0) {
+        free(i->output_queue);
+        free(i);
+        return NULL;
+    }
+
+    if (output_queue_start(i->output_queue) < 0) {
+        output_queue_destroy(i->output_queue);
+        free(i->output_queue);
+        free(i);
+        return NULL;
+    }
+
     return i;
 }
 
 void free_bgp_instance(struct bgp_instance *i) {
+    if (i->output_queue) {
+        output_queue_shutdown(i->output_queue);
+        output_queue_join(i->output_queue);
+        output_queue_destroy(i->output_queue);
+        free(i->output_queue);
+    }
     free(i);
 }
 
@@ -281,6 +313,9 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     //Init the stdout lock and the output function
     pthread_mutex_init(&peer->stdout_lock, NULL);
     initialise_output(peer);
+
+    //Set output queue from instance
+    peer->output_queue = i->output_queue;
 
     //Init message queue
     INIT_LIST_HEAD(&peer->ingress_q);
@@ -459,6 +494,27 @@ int get_read_fd_set(struct bgp_peer *peer, fd_set *set) {
 
 
 
+/*
+ * check_hold_timer_expired() - Check if hold timer fired and handle it
+ *
+ * Returns 1 if timer expired (sends NOTIFICATION, closes socket, sets IDLE)
+ * Returns 0 if timer has not expired
+ */
+int check_hold_timer_expired(struct bgp_peer *peer, fd_set *set, const char *state_name) {
+    if (!timer_has_fired(peer->local_timers, HoldTimer, set)) {
+        return 0;
+    }
+
+    log_print(LOG_WARN, "HoldTimer expired in %s for peer %s\n", state_name, peer->name);
+    queue_and_send_notification(peer, BGP_ERR_HOLD_TIMER, 0);
+    bgp_close_socket(peer);
+    peer->fsm_state = IDLE;
+    peer->last_notification_code = BGP_ERR_HOLD_TIMER;
+    peer->last_notification_subcode = 0;
+    return 1;
+}
+
+
 void msg_queue_gc(struct list_head *queue) {
     struct bgp_msg *msg = NULL;
     struct list_head *i, *tmp;
@@ -478,13 +534,11 @@ void msg_queue_gc(struct list_head *queue) {
 void print_bgp_msg_and_gc(struct bgp_peer *peer) {
     struct bgp_msg *msg = NULL;
     struct list_head *i, *tmp;
+    char *json_str;
 
     if (list_empty(&peer->output_q)) {
         return;
     }
-
-    //Lock stdout
-    pthread_mutex_lock(&peer->stdout_lock);
 
     list_for_each_safe(i, tmp, &peer->output_q) {
         msg = list_entry(i, struct bgp_msg, output);
@@ -492,12 +546,26 @@ void print_bgp_msg_and_gc(struct bgp_peer *peer) {
         if (!msg->actioned) {
             break;
         }
-        peer->print_msg(peer, msg);
+
+        /* Format the message based on output format */
+        if (peer->output_format == BGP_OUT_JSONL) {
+            json_str = format_msg_jsonl(msg);
+        } else {
+            json_str = format_msg_json(msg);
+        }
+
+        /* Push to output queue (queue takes ownership of json_str) */
+        if (json_str && peer->output_queue) {
+            output_queue_push(peer->output_queue, json_str);
+        } else if (json_str) {
+            /* Fallback: direct print if no queue (shouldn't happen) */
+            printf("%s\n", json_str);
+            free(json_str);
+        }
+
         list_del(i);
         free_msg(msg);
     }
-
-    pthread_mutex_unlock(&peer->stdout_lock);
 }
 
 
@@ -779,20 +847,7 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
     struct bgp_msg *message = NULL;
     log_print(LOG_DEBUG, "Peer %s FSM state: OPENSENT\n", peer->name);
 
-    //Did the hold timer expire?
-    if( which_timer_fired(peer->local_timers, set) == HoldTimer ) {
-        log_print(LOG_WARN, "HoldTimer expired in OPENSENT for peer %s\n", peer->name);
-        queue_and_send_notification(peer, BGP_ERR_HOLD_TIMER, 0);
-        peer->connect_retry_counter++;
-        disarm_timer(peer->local_timers, ConnectRetryTimer);
-        bgp_close_socket(peer);
-        peer->fsm_state = IDLE;
-        peer->last_notification_code = BGP_ERR_HOLD_TIMER;
-        peer->last_notification_subcode = 0;
-        return -1;
-    }
-
-    //Pop a message off the ingress queue
+    //Pop a message off the ingress queue - process messages before checking timers
     message = pop_ingress_queue(peer);
 
     //Did we receive a message, and was it an OPEN message?
@@ -839,10 +894,33 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
             //Store peer's router ID
             peer->peer_rid = message->open.router_id;
 
+            // Negotiate hold time: use minimum of local and peer's, 0 if either is 0
+            peer->peer_timers.recv_hold_time = message->open.hold_time;
+            uint16_t negotiated_hold;
+            if (peer->peer_timers.conf_hold_time == 0 || message->open.hold_time == 0) {
+                negotiated_hold = 0;
+            } else if (message->open.hold_time < peer->peer_timers.conf_hold_time) {
+                negotiated_hold = message->open.hold_time;
+            } else {
+                negotiated_hold = peer->peer_timers.conf_hold_time;
+            }
+
+            log_print(LOG_INFO, "Peer %s hold time negotiated: %d (local=%d, peer=%d)\n",
+                peer->name, negotiated_hold,
+                peer->peer_timers.conf_hold_time, message->open.hold_time);
+
+            // Update timer values based on negotiated hold time
+            if (negotiated_hold > 0) {
+                set_timer_value(peer->local_timers, HoldTimer, negotiated_hold);
+                set_timer_value(peer->local_timers, KeepaliveTimer, negotiated_hold / 3);
+            }
+
             //Sending a keepalive
             log_print(LOG_DEBUG, "Sending keepalive\n");
             queue_and_send_keepalive(peer);
-            start_timer_recurring(peer->local_timers, KeepaliveTimer);
+            if (negotiated_hold > 0) {
+                start_timer_recurring(peer->local_timers, KeepaliveTimer);
+            }
             peer->fsm_state = OPENCONFIRM;
             return 0;
         } else if (message->type == NOTIFICATION) {
@@ -856,6 +934,13 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
         }
     }
 
+    // Check hold timer AFTER processing messages
+    if (check_hold_timer_expired(peer, set, "OPENSENT")) {
+        peer->connect_retry_counter++;
+        disarm_timer(peer->local_timers, ConnectRetryTimer);
+        return -1;
+    }
+
     return 0;
 }
 
@@ -863,23 +948,13 @@ int fsm_state_openconfirm(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
     struct bgp_msg *message;
     log_print(LOG_DEBUG, "Peer %s FSM state: OPENCONFIRM\n", peer->name);
 
-    //Did the hold timer expire?
-    if( which_timer_fired(peer->local_timers, set) == HoldTimer ) {
-        log_print(LOG_WARN, "HoldTimer expired in OPENCONFIRM for peer %s\n", peer->name);
-        queue_and_send_notification(peer, BGP_ERR_HOLD_TIMER, 0);
-        bgp_close_socket(peer);
-        peer->fsm_state = IDLE;
-        peer->last_notification_code = BGP_ERR_HOLD_TIMER;
-        peer->last_notification_subcode = 0;
-        return -1;
-    }
-
     //If the Keepalive timer has fired, send a keepalive
     if ( timer_has_fired(peer->local_timers, KeepaliveTimer, set) ) {
         log_print(LOG_DEBUG, "Keepalive timer fired in OPENCONFIRM, sending KEEPALIVE\n");
         queue_and_send_keepalive(peer);
     }
 
+    // Process incoming messages BEFORE checking hold timer
     message = pop_ingress_queue(peer);
 
     if (message) {
@@ -898,6 +973,11 @@ int fsm_state_openconfirm(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
         }
     }
 
+    // Check hold timer AFTER processing messages
+    if (check_hold_timer_expired(peer, set, "OPENCONFIRM")) {
+        return -1;
+    }
+
     return 0;
 }
 
@@ -905,23 +985,14 @@ int fsm_state_established(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
     struct bgp_msg *message;
     log_print(LOG_DEBUG, "Peer %s FSM state: ESTABLISHED\n", peer->name);
 
-    //Did the hold timer expire?
-    if( which_timer_fired(peer->local_timers, set) == HoldTimer ) {
-        log_print(LOG_WARN, "HoldTimer expired in ESTABLISHED for peer %s\n", peer->name);
-        queue_and_send_notification(peer, BGP_ERR_HOLD_TIMER, 0);
-        bgp_close_socket(peer);
-        peer->fsm_state = IDLE;
-        peer->last_notification_code = BGP_ERR_HOLD_TIMER;
-        peer->last_notification_subcode = 0;
-        return -1;
-    }
-
     //If the Keepalive timer has fired, send a keepalive
     if ( timer_has_fired(peer->local_timers, KeepaliveTimer, set) ) {
         log_print(LOG_DEBUG, "Keepalive timer fired, sending KEEPALIVE\n");
         queue_and_send_keepalive(peer);
     }
 
+    // Process incoming messages BEFORE checking hold timer.
+    // This avoids a race where a KEEPALIVE arrives just as the timer fires.
     message = pop_ingress_queue(peer);
 
     if (message) {
@@ -941,8 +1012,15 @@ int fsm_state_established(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *se
             case UPDATE:
                 //UPDATE messages are printed but don't require specific FSM action
                 log_print(LOG_DEBUG, "Received UPDATE from peer %s\n", peer->name);
+                start_timer(peer->local_timers, HoldTimer);
                 break;
         }
+    }
+
+    // Check hold timer AFTER processing messages - a just-arrived KEEPALIVE/UPDATE
+    // will have reset it above, avoiding a false expiry
+    if (check_hold_timer_expired(peer, set, "ESTABLISHED")) {
+        return -1;
     }
 
     return 0;
