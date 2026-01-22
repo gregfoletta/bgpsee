@@ -196,6 +196,7 @@ int free_update(struct bgp_update *);
 int free_path_attributes(struct bgp_update *);
 int free_as_path(struct bgp_path_attribute *);
 int free_aggregator(struct bgp_path_attribute *);
+int free_community(struct bgp_path_attribute *);
 int free_mp_reach(struct bgp_path_attribute *);
 int free_mp_unreach(struct bgp_path_attribute *);
 
@@ -245,6 +246,7 @@ int free_path_attributes(struct bgp_update *update) {
 
     pa_free_dispatch[AS_PATH] = &free_as_path;
     pa_free_dispatch[AGGREGATOR] = &free_aggregator;
+    pa_free_dispatch[COMMUNITY] = &free_community;
     pa_free_dispatch[MP_REACH_NLRI] = &free_mp_reach;
     pa_free_dispatch[MP_UNREACH_NLRI] = &free_mp_unreach;
 
@@ -286,6 +288,15 @@ int free_as_path(struct bgp_path_attribute *attribute) {
 
 int free_aggregator(struct bgp_path_attribute *attribute) {
     free(attribute->aggregator);
+
+    return 0;
+}
+
+int free_community(struct bgp_path_attribute *attribute) {
+    if (attribute->community) {
+        free(attribute->community->communities);
+        free(attribute->community);
+    }
 
     return 0;
 }
@@ -555,6 +566,31 @@ struct aggregator *parse_update_aggregator(unsigned char **body, int four_octet_
     return agg;
 }
 
+struct community *parse_update_community(unsigned char **body, uint16_t attr_length) {
+    struct community *comm;
+    unsigned char **pos = body;
+    uint16_t count = attr_length / 4;
+
+    comm = calloc(1, sizeof(*comm));
+    if (!comm) {
+        return NULL;
+    }
+
+    comm->n_communities = count;
+    if (count > 0) {
+        comm->communities = malloc(count * sizeof(*comm->communities));
+        if (!comm->communities) {
+            free(comm);
+            return NULL;
+        }
+        for (uint16_t i = 0; i < count; i++) {
+            comm->communities[i] = uchar_be_to_uint32_inc(pos);
+        }
+    }
+
+    return comm;
+}
+
 /* Forward declarations for MP_REACH/UNREACH parsing */
 struct mp_reach_nlri *parse_mp_reach_nlri(unsigned char **body, uint16_t attr_length);
 struct mp_unreach_nlri *parse_mp_unreach_nlri(unsigned char **body, uint16_t attr_length);
@@ -603,6 +639,11 @@ struct bgp_path_attribute *parse_update_attr(unsigned char **body, int four_octe
             break;
         case AGGREGATOR:
             attr->aggregator = parse_update_aggregator(pos, four_octet_asn);
+            break;
+        case COMMUNITY:
+            if (attr->length > 0) {
+                attr->community = parse_update_community(pos, attr->length);
+            }
             break;
         case MP_REACH_NLRI:
             if (attr->length > 0) {

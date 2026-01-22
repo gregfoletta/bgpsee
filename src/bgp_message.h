@@ -55,6 +55,11 @@ struct aggregator {
     uint32_t ip;
 };
 
+struct community {
+    uint16_t n_communities;
+    uint32_t *communities;
+};
+
 struct bgp_path_attribute {
     uint8_t flags;
     uint8_t type;
@@ -68,6 +73,7 @@ struct bgp_path_attribute {
         uint32_t local_pref;
         //Atomic aggregate is length zero, defined only by the type
         struct aggregator *aggregator;
+        struct community *community;
         struct mp_reach_nlri *mp_reach;
         struct mp_unreach_nlri *mp_unreach;
     };
@@ -134,6 +140,7 @@ enum bgp_update_attrs {
     LOCAL_PREF,
     ATOMIC_AGGREGATE,
     AGGREGATOR,
+    COMMUNITY,
     /* ... gap ... */
     MP_REACH_NLRI = 14,
     MP_UNREACH_NLRI = 15
