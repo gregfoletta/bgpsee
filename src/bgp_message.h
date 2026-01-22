@@ -60,6 +60,17 @@ struct community {
     uint32_t *communities;
 };
 
+struct large_community_value {
+    uint32_t global_admin;
+    uint32_t local_data_1;
+    uint32_t local_data_2;
+};
+
+struct large_community {
+    uint16_t n_communities;
+    struct large_community_value *communities;
+};
+
 struct bgp_path_attribute {
     uint8_t flags;
     uint8_t type;
@@ -74,6 +85,7 @@ struct bgp_path_attribute {
         //Atomic aggregate is length zero, defined only by the type
         struct aggregator *aggregator;
         struct community *community;
+        struct large_community *large_community;
         struct mp_reach_nlri *mp_reach;
         struct mp_unreach_nlri *mp_unreach;
     };
@@ -143,7 +155,9 @@ enum bgp_update_attrs {
     COMMUNITY,
     /* ... gap ... */
     MP_REACH_NLRI = 14,
-    MP_UNREACH_NLRI = 15
+    MP_UNREACH_NLRI = 15,
+    /* ... gap ... */
+    LARGE_COMMUNITY = 32
 };
 
 #define MAX_ATTRIBUTE 255

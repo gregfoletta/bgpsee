@@ -197,6 +197,7 @@ int free_path_attributes(struct bgp_update *);
 int free_as_path(struct bgp_path_attribute *);
 int free_aggregator(struct bgp_path_attribute *);
 int free_community(struct bgp_path_attribute *);
+int free_large_community(struct bgp_path_attribute *);
 int free_mp_reach(struct bgp_path_attribute *);
 int free_mp_unreach(struct bgp_path_attribute *);
 
@@ -249,6 +250,7 @@ int free_path_attributes(struct bgp_update *update) {
     pa_free_dispatch[COMMUNITY] = &free_community;
     pa_free_dispatch[MP_REACH_NLRI] = &free_mp_reach;
     pa_free_dispatch[MP_UNREACH_NLRI] = &free_mp_unreach;
+    pa_free_dispatch[LARGE_COMMUNITY] = &free_large_community;
 
     //Note the <=
     for (int attr = ORIGIN; attr <= MAX_ATTRIBUTE; attr++) {
@@ -296,6 +298,15 @@ int free_community(struct bgp_path_attribute *attribute) {
     if (attribute->community) {
         free(attribute->community->communities);
         free(attribute->community);
+    }
+
+    return 0;
+}
+
+int free_large_community(struct bgp_path_attribute *attribute) {
+    if (attribute->large_community) {
+        free(attribute->large_community->communities);
+        free(attribute->large_community);
     }
 
     return 0;
@@ -591,6 +602,33 @@ struct community *parse_update_community(unsigned char **body, uint16_t attr_len
     return comm;
 }
 
+struct large_community *parse_update_large_community(unsigned char **body, uint16_t attr_length) {
+    struct large_community *lcomm;
+    unsigned char **pos = body;
+    uint16_t count = attr_length / 12;
+
+    lcomm = calloc(1, sizeof(*lcomm));
+    if (!lcomm) {
+        return NULL;
+    }
+
+    lcomm->n_communities = count;
+    if (count > 0) {
+        lcomm->communities = malloc(count * sizeof(*lcomm->communities));
+        if (!lcomm->communities) {
+            free(lcomm);
+            return NULL;
+        }
+        for (uint16_t i = 0; i < count; i++) {
+            lcomm->communities[i].global_admin = uchar_be_to_uint32_inc(pos);
+            lcomm->communities[i].local_data_1 = uchar_be_to_uint32_inc(pos);
+            lcomm->communities[i].local_data_2 = uchar_be_to_uint32_inc(pos);
+        }
+    }
+
+    return lcomm;
+}
+
 /* Forward declarations for MP_REACH/UNREACH parsing */
 struct mp_reach_nlri *parse_mp_reach_nlri(unsigned char **body, uint16_t attr_length);
 struct mp_unreach_nlri *parse_mp_unreach_nlri(unsigned char **body, uint16_t attr_length);
@@ -643,6 +681,11 @@ struct bgp_path_attribute *parse_update_attr(unsigned char **body, int four_octe
         case COMMUNITY:
             if (attr->length > 0) {
                 attr->community = parse_update_community(pos, attr->length);
+            }
+            break;
+        case LARGE_COMMUNITY:
+            if (attr->length > 0) {
+                attr->large_community = parse_update_large_community(pos, attr->length);
             }
             break;
         case MP_REACH_NLRI:
