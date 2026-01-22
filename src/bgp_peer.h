@@ -58,10 +58,13 @@ struct bgp_peer {
     sds name;
     unsigned int id;
     uint8_t *version;
-    uint16_t *local_asn;
-    uint16_t peer_asn;
+    uint32_t *local_asn;
+    uint32_t peer_asn;
     uint32_t *local_rid;
     uint32_t peer_rid;
+
+    // 4-byte ASN support (RFC 6793)
+    int four_octet_asn;  // 1 if both peers support 4-byte ASN
 
     sds peer_ip;
     sds source_ip;

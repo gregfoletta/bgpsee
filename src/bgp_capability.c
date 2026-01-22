@@ -238,3 +238,24 @@ const char *bgp_capability_name(uint8_t code) {
         default:                       return "Unknown";
     }
 }
+
+int bgp_capabilities_has_four_octet_asn(const struct bgp_capabilities *caps, uint32_t *asn) {
+    struct list_head *pos;
+    struct bgp_capability *cap;
+
+    if (!caps) {
+        return 0;
+    }
+
+    list_for_each(pos, &caps->caps) {
+        cap = list_entry(pos, struct bgp_capability, list);
+        if (cap->code == BGP_CAP_FOUR_OCTET_ASN && cap->length == 4 && cap->value) {
+            if (asn) {
+                *asn = uchar_be_to_uint32(cap->value);
+            }
+            return 1;
+        }
+    }
+
+    return 0;
+}

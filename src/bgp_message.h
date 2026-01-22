@@ -40,7 +40,7 @@ struct bgp_open {
 struct path_segment {
     uint8_t type;
     uint8_t n_as;
-    uint16_t *as;
+    uint32_t *as;  // 4-byte ASNs (RFC 6793)
     struct list_head list;
 };
 
@@ -51,7 +51,7 @@ struct as_path {
 };
 
 struct aggregator {
-    uint16_t asn;
+    uint32_t asn;  // 4-byte ASN (RFC 6793)
     uint32_t ip;
 };
 
@@ -223,7 +223,12 @@ struct bgp_msg {
 
 
 
-struct bgp_msg *recv_msg(int socket_fd);
+/*
+ * Receive and parse a BGP message from the socket.
+ * Uses peer->socket.fd for the socket and peer->four_octet_asn for AS_PATH parsing.
+ */
+struct bgp_peer;
+struct bgp_msg *recv_msg(struct bgp_peer *peer);
 struct bgp_msg *alloc_sent_msg(void);
 int free_msg(struct bgp_msg *);
 ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time,
