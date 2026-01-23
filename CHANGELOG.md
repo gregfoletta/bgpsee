@@ -1,4 +1,11 @@
 # Change Log
+- 0.0.8
+    - Added 4-byte ASN support (RFC 6793)
+    - Added COMMUNITY path attribute parsing (RFC 1997)
+    - Added LARGE_COMMUNITY path attribute parsing (RFC 8092)
+    - Added timestamp to log messages
+    - Fixed header include guard issue causing build failures in CI
+
 - 0.0.7
     - Added automatic reconnection with exponential backoff (`-R` flag)
     - Added output queue with dedicated writer thread to prevent keepalive stalls on slow stdout

@@ -26,7 +26,7 @@
 
 struct bgp_instance {
     uint8_t version;
-    uint16_t local_asn;
+    uint32_t local_asn;
     uint32_t local_rid;
     int n_peers;
     struct bgp_peer *peers[MAX_BGP_PEERS];
@@ -162,7 +162,7 @@ int setup_reconnect_timer(struct bgp_peer *peer) {
 */
 
 
-struct bgp_instance *create_bgp_instance(uint16_t local_asn, uint32_t local_rid, uint8_t version) {
+struct bgp_instance *create_bgp_instance(uint32_t local_asn, uint32_t local_rid, uint8_t version) {
     struct bgp_instance *i;
 
     log_print(LOG_DEBUG, "Creating new peer (ASN %d, RID: %d, Version: %d)\n", local_asn, local_rid, version);
@@ -239,7 +239,7 @@ struct bgp_peer *get_peer_from_instance(struct bgp_instance *i, unsigned int id)
 
 
 //TODO: Need to fix unsigned here, as we need to be able to signal failure of the function
-unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const uint16_t peer_asn, const char *peer_name) {
+unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const uint32_t peer_asn, const char *peer_name) {
     struct bgp_peer *peer;
     unsigned int new_id;
 
@@ -309,6 +309,7 @@ unsigned int create_bgp_peer(struct bgp_instance *i, const char *peer_ip, const 
     peer->socket.fd = -1;
 
     peer->peer_asn = peer_asn;
+    peer->four_octet_asn = 0;
 
     //Init the stdout lock and the output function
     pthread_mutex_init(&peer->stdout_lock, NULL);
@@ -625,7 +626,7 @@ void *bgp_peer_thread(void *param) {
             //Did we receive messages?
             if (peer->socket.fd >= 0 && FD_ISSET(peer->socket.fd, set)) {
                 log_print(LOG_DEBUG, "Calling recv_msg() on socket\n");
-                message = recv_msg(peer->socket.fd);
+                message = recv_msg(peer);
 
                 if (!message) {
                     log_print(LOG_ERROR, "recv_msg() errored\n");
@@ -789,7 +790,7 @@ int fsm_state_idle(struct bgp_peer *peer, fd_set *set) {
     //Start the ConnectRetryTimer
     start_timer(peer->local_timers, ConnectRetryTimer);
     
-    log_print(LOG_INFO, "Opening connection to %s,%d (%s)\n", peer->peer_ip, peer->peer_asn, peer->name);
+    log_print(LOG_INFO, "Opening connection to %s,%u (%s)\n", peer->peer_ip, peer->peer_asn, peer->name);
     peer->socket.fd = tcp_connect(peer->peer_ip, "179", peer->source_ip);
 
     if (peer->socket.fd < 0) {
@@ -814,6 +815,7 @@ int fsm_state_idle(struct bgp_peer *peer, fd_set *set) {
 
 int fsm_state_connect(struct bgp_peer *peer) {
     struct bgp_capabilities *caps;
+    uint16_t open_asn;
 
     log_print(LOG_DEBUG, "Peer %s FSM state: CONNECT\n", peer->name);
 
@@ -823,12 +825,14 @@ int fsm_state_connect(struct bgp_peer *peer) {
         bgp_capabilities_add_route_refresh(caps);
         bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV4, BGP_SAFI_UNICAST);
         bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV6, BGP_SAFI_UNICAST);
+        bgp_capabilities_add_four_octet_asn(caps, *peer->local_asn);
     }
 
-    //TODO: fix hold timer
+    /* RFC 6793: OPEN ASN field is 2 bytes. Use AS_TRANS (23456) if local ASN > 65535 */
+    open_asn = (*peer->local_asn > 65535) ? 23456 : (uint16_t)*peer->local_asn;
+
     log_print(LOG_DEBUG, "Sending OPEN to peer %s\n", peer->name);
-    /* Note: caps ownership transfers to the queued message, freed by free_msg() */
-    queue_and_send_open(peer, *peer->version, *peer->local_asn, 30, *peer->local_rid, caps);
+    queue_and_send_open(peer, *peer->version, open_asn, 30, *peer->local_rid, caps);
 
     start_timer(peer->local_timers, HoldTimer);
     peer->fsm_state = OPENSENT;
@@ -855,10 +859,30 @@ int fsm_state_opensent(struct bgp_peer *peer, struct bgp_msg *msg, fd_set *set) 
         if (message->type == OPEN) {
             log_print(LOG_DEBUG, "Checking OPEN for correctness\n");
 
+            /* Check 4-byte ASN capability (RFC 6793) */
+            uint32_t peer_real_asn = message->open.asn;
+            uint32_t peer_cap_asn = 0;
+            int peer_has_4byte = 0;
+
+            if (message->open.capabilities) {
+                peer_has_4byte = bgp_capabilities_has_four_octet_asn(
+                    message->open.capabilities, &peer_cap_asn);
+            }
+
+            if (peer_has_4byte) {
+                /* Peer supports 4-byte ASN - use capability value as real ASN */
+                peer_real_asn = peer_cap_asn;
+                peer->four_octet_asn = 1;
+                log_print(LOG_INFO, "Peer %s supports 4-byte ASN (ASN %u)\n",
+                    peer->name, peer_real_asn);
+            } else {
+                peer->four_octet_asn = 0;
+            }
+
             //Check peer ASN matches configured ASN
-            if (message->open.asn != peer->peer_asn) {
-                log_print(LOG_WARN, "Peer %s ASN mismatch: expected %d, got %d\n",
-                    peer->name, peer->peer_asn, message->open.asn);
+            if (peer_real_asn != peer->peer_asn) {
+                log_print(LOG_WARN, "Peer %s ASN mismatch: expected %u, got %u\n",
+                    peer->name, peer->peer_asn, peer_real_asn);
                 queue_and_send_notification(peer, BGP_ERR_OPEN, BGP_ERR_OPEN_PEER_AS);
                 bgp_close_socket(peer);
                 peer->fsm_state = IDLE;

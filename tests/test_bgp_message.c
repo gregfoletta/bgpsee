@@ -15,7 +15,25 @@
 #include "testhelp.h"
 #include "../src/bgp_message.h"
 #include "../src/bgp_capability.h"
+#include "../src/bgp_peer.h"
 #include "../src/list.h"
+
+/*
+ * Helper to create a minimal peer struct for testing.
+ * Sets socket.fd and four_octet_asn, caller must free.
+ */
+static struct bgp_peer *create_test_peer(int fd, int four_octet_asn) {
+    struct bgp_peer *peer = calloc(1, sizeof(*peer));
+    if (peer) {
+        peer->socket.fd = fd;
+        peer->four_octet_asn = four_octet_asn;
+    }
+    return peer;
+}
+
+static void free_test_peer(struct bgp_peer *peer) {
+    free(peer);
+}
 
 /*
  * Helper function to create a socket pair and write test data
@@ -66,8 +84,10 @@ void test_keepalive_message(void) {
     test_cond("Created test socket for KEEPALIVE", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns non-NULL for valid KEEPALIVE",
             parsed != NULL);
@@ -108,8 +128,10 @@ void test_open_message(void) {
     test_cond("Created test socket for OPEN", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns non-NULL for valid OPEN",
             parsed != NULL);
@@ -147,8 +169,10 @@ void test_notification_message(void) {
     test_cond("Created test socket for NOTIFICATION", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns non-NULL for valid NOTIFICATION",
             parsed != NULL);
@@ -182,8 +206,10 @@ void test_update_empty(void) {
     test_cond("Created test socket for empty UPDATE", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns non-NULL for empty UPDATE",
             parsed != NULL);
@@ -257,8 +283,10 @@ void test_update_with_nlri(void) {
     test_cond("Created test socket for UPDATE with NLRI", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns non-NULL for UPDATE with NLRI",
             parsed != NULL);
@@ -337,8 +365,10 @@ void test_update_with_withdrawn(void) {
     test_cond("Created test socket for UPDATE with withdrawn", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns non-NULL for UPDATE with withdrawn",
             parsed != NULL);
@@ -379,8 +409,10 @@ void test_invalid_header_marker(void) {
     test_cond("Created test socket for invalid marker", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns NULL for invalid marker",
             parsed == NULL);
@@ -398,8 +430,10 @@ void test_invalid_message_type(void) {
     test_cond("Created test socket for invalid type 0", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns NULL for type 0",
             parsed == NULL);
@@ -412,8 +446,10 @@ void test_invalid_message_type(void) {
     test_cond("Created test socket for invalid type 6", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns NULL for type 6",
             parsed == NULL);
@@ -439,8 +475,10 @@ void test_update_invalid_withdrawn_length(void) {
     test_cond("Created test socket for invalid withdrawn length", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns NULL for invalid withdrawn length",
             parsed == NULL);
@@ -556,8 +594,10 @@ void test_notification_round_trip(void) {
     close(fds[1]);  // Close write end so recv_msg gets EOF after data
 
     // Parse it with recv_msg
-    struct bgp_msg *parsed = recv_msg(fds[0]);
+    struct bgp_peer *test_peer = create_test_peer(fds[0], 0);
+    struct bgp_msg *parsed = recv_msg(test_peer);
     close(fds[0]);
+    free_test_peer(test_peer);
 
     test_cond("recv_msg parses sent NOTIFICATION", parsed != NULL);
 
@@ -595,8 +635,10 @@ void test_nlri_invalid_prefix_length(void) {
     test_cond("Created test socket for invalid NLRI prefix length", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         // The UPDATE should parse but skip the invalid NLRI
         // (our fix returns NULL from parse_ipv4_nlri, which breaks the loop)
@@ -866,8 +908,10 @@ void test_send_open_round_trip(void) {
         send_open(fds[1], 4, 65001, 90, 0xC0A80001, caps);
         close(fds[1]);
 
-        struct bgp_msg *parsed = recv_msg(fds[0]);
+        struct bgp_peer *test_peer = create_test_peer(fds[0], 0);
+        struct bgp_msg *parsed = recv_msg(test_peer);
         close(fds[0]);
+        free_test_peer(test_peer);
 
         test_cond("recv_msg parses OPEN with caps", parsed != NULL);
 
@@ -953,8 +997,10 @@ void test_update_mp_reach_ipv6(void) {
     test_cond("Created test socket for MP_REACH_NLRI IPv6", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns non-NULL", parsed != NULL);
 
@@ -1035,8 +1081,10 @@ void test_update_mp_unreach_ipv6(void) {
     test_cond("Created test socket for MP_UNREACH_NLRI IPv6", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns non-NULL", parsed != NULL);
 
@@ -1143,8 +1191,10 @@ void test_update_mp_reach_dual_nexthop(void) {
     test_cond("Created test socket for dual next hop", fd >= 0);
 
     if (fd >= 0) {
-        struct bgp_msg *parsed = recv_msg(fd);
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
         close(fd);
+        free_test_peer(peer);
 
         test_cond("recv_msg returns non-NULL", parsed != NULL);
 

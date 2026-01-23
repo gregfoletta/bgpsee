@@ -1,3 +1,6 @@
+#ifndef BGP_PRINT_H
+#define BGP_PRINT_H
+
 //Types of output
 enum bgp_output {
     BGP_OUT_JSON,
@@ -15,3 +18,4 @@ int _set_bgp_output(struct bgp_peer *, enum bgp_output);
 char *format_msg_json(struct bgp_msg *);
 char *format_msg_jsonl(struct bgp_msg *);
 
+#endif /* BGP_PRINT_H */

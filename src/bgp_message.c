@@ -7,6 +7,7 @@
 #include "debug.h"
 #include "bgp_message.h"
 #include "bgp_capability.h"
+#include "bgp_peer.h"
 #include "byte_conv.h"
 #include "list.h"
 #include "log.h"
@@ -56,7 +57,7 @@ struct bgp_msg *alloc_bgp_msg(const uint16_t length, enum bgp_msg_type type);
 
 
 int parse_open(struct bgp_msg *, unsigned char *);
-int parse_update(struct bgp_msg *, unsigned char *);
+int parse_update(struct bgp_msg *, unsigned char *, int four_octet_asn);
 int parse_keepalive(struct bgp_msg *);
 int parse_notification(struct bgp_msg *, unsigned char *);
 int parse_route_refresh(struct bgp_msg *);
@@ -78,9 +79,11 @@ int parse_route_refresh(struct bgp_msg *);
 
 #define MSG_PAD 256
 
-struct bgp_msg *recv_msg(int socket_fd) {
+struct bgp_msg *recv_msg(struct bgp_peer *peer) {
     struct bgp_msg *message;
     unsigned char *message_body = NULL;
+    int socket_fd = peer->socket.fd;
+    int four_octet_asn = peer->four_octet_asn;
 
     unsigned char header[BGP_HEADER_LEN];
     ssize_t ret;
@@ -130,7 +133,7 @@ struct bgp_msg *recv_msg(int socket_fd) {
             free(message);
             free(message_body);
             return NULL;
-        } 
+        }
     }
 
     switch (message->type) {
@@ -138,7 +141,7 @@ struct bgp_msg *recv_msg(int socket_fd) {
             ret = parse_open(message, message_body);
             break;
         case UPDATE:
-            ret = parse_update(message, message_body);
+            ret = parse_update(message, message_body, four_octet_asn);
             break;
         case NOTIFICATION:
             ret = parse_notification(message, message_body);
@@ -193,6 +196,8 @@ int free_update(struct bgp_update *);
 int free_path_attributes(struct bgp_update *);
 int free_as_path(struct bgp_path_attribute *);
 int free_aggregator(struct bgp_path_attribute *);
+int free_community(struct bgp_path_attribute *);
+int free_large_community(struct bgp_path_attribute *);
 int free_mp_reach(struct bgp_path_attribute *);
 int free_mp_unreach(struct bgp_path_attribute *);
 
@@ -242,8 +247,10 @@ int free_path_attributes(struct bgp_update *update) {
 
     pa_free_dispatch[AS_PATH] = &free_as_path;
     pa_free_dispatch[AGGREGATOR] = &free_aggregator;
+    pa_free_dispatch[COMMUNITY] = &free_community;
     pa_free_dispatch[MP_REACH_NLRI] = &free_mp_reach;
     pa_free_dispatch[MP_UNREACH_NLRI] = &free_mp_unreach;
+    pa_free_dispatch[LARGE_COMMUNITY] = &free_large_community;
 
     //Note the <=
     for (int attr = ORIGIN; attr <= MAX_ATTRIBUTE; attr++) {
@@ -283,6 +290,24 @@ int free_as_path(struct bgp_path_attribute *attribute) {
 
 int free_aggregator(struct bgp_path_attribute *attribute) {
     free(attribute->aggregator);
+
+    return 0;
+}
+
+int free_community(struct bgp_path_attribute *attribute) {
+    if (attribute->community) {
+        free(attribute->community->communities);
+        free(attribute->community);
+    }
+
+    return 0;
+}
+
+int free_large_community(struct bgp_path_attribute *attribute) {
+    if (attribute->large_community) {
+        free(attribute->large_community->communities);
+        free(attribute->large_community);
+    }
 
     return 0;
 }
@@ -450,18 +475,18 @@ ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time,
 //freed in free_as_path()
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
-struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length) {
+struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length, int four_octet_asn) {
     struct as_path *path;
     struct path_segment *seg;
     unsigned char **pos;
     uint16_t length;
     int n;
+    int as_size = four_octet_asn ? 4 : 2;  // Bytes per AS number
 
     pos = body;
-    //Remove two bytes to account or type and flags of the attrbute
     length = attr_length;
 
-    path = calloc(1, sizeof(*path));    
+    path = calloc(1, sizeof(*path));
 
     if (!path) {
         return NULL;
@@ -490,8 +515,8 @@ struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length)
             goto error;
         }
 
-        //Check we have enough data for all AS numbers (2 bytes each)
-        uint16_t as_bytes_needed = (uint16_t)seg->n_as * 2;
+        //Check we have enough data for all AS numbers
+        uint16_t as_bytes_needed = (uint16_t)(seg->n_as * as_size);
         if (as_bytes_needed > length) {
             goto error;
         }
@@ -504,7 +529,11 @@ struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length)
             }
 
             for (n = 0; n < seg->n_as; n++) {
-                seg->as[n] = uchar_be_to_uint16_inc(pos);
+                if (four_octet_asn) {
+                    seg->as[n] = uchar_be_to_uint32_inc(pos);
+                } else {
+                    seg->as[n] = uchar_be_to_uint16_inc(pos);
+                }
             }
             length -= as_bytes_needed;
         }
@@ -526,7 +555,7 @@ struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length)
 }
 #pragma GCC diagnostic pop
 
-struct aggregator *parse_update_aggregator(unsigned char **body) {
+struct aggregator *parse_update_aggregator(unsigned char **body, int four_octet_asn) {
     struct aggregator *agg;
     unsigned char **pos;
 
@@ -538,17 +567,73 @@ struct aggregator *parse_update_aggregator(unsigned char **body) {
         return NULL;
     }
 
-    agg->asn = uchar_be_to_uint16_inc(pos);
+    if (four_octet_asn) {
+        agg->asn = uchar_be_to_uint32_inc(pos);
+    } else {
+        agg->asn = uchar_be_to_uint16_inc(pos);
+    }
     agg->ip = uchar_be_to_uint32_inc(pos);
 
     return agg;
+}
+
+struct community *parse_update_community(unsigned char **body, uint16_t attr_length) {
+    struct community *comm;
+    unsigned char **pos = body;
+    uint16_t count = attr_length / 4;
+
+    comm = calloc(1, sizeof(*comm));
+    if (!comm) {
+        return NULL;
+    }
+
+    comm->n_communities = count;
+    if (count > 0) {
+        comm->communities = malloc(count * sizeof(*comm->communities));
+        if (!comm->communities) {
+            free(comm);
+            return NULL;
+        }
+        for (uint16_t i = 0; i < count; i++) {
+            comm->communities[i] = uchar_be_to_uint32_inc(pos);
+        }
+    }
+
+    return comm;
+}
+
+struct large_community *parse_update_large_community(unsigned char **body, uint16_t attr_length) {
+    struct large_community *lcomm;
+    unsigned char **pos = body;
+    uint16_t count = attr_length / 12;
+
+    lcomm = calloc(1, sizeof(*lcomm));
+    if (!lcomm) {
+        return NULL;
+    }
+
+    lcomm->n_communities = count;
+    if (count > 0) {
+        lcomm->communities = malloc(count * sizeof(*lcomm->communities));
+        if (!lcomm->communities) {
+            free(lcomm);
+            return NULL;
+        }
+        for (uint16_t i = 0; i < count; i++) {
+            lcomm->communities[i].global_admin = uchar_be_to_uint32_inc(pos);
+            lcomm->communities[i].local_data_1 = uchar_be_to_uint32_inc(pos);
+            lcomm->communities[i].local_data_2 = uchar_be_to_uint32_inc(pos);
+        }
+    }
+
+    return lcomm;
 }
 
 /* Forward declarations for MP_REACH/UNREACH parsing */
 struct mp_reach_nlri *parse_mp_reach_nlri(unsigned char **body, uint16_t attr_length);
 struct mp_unreach_nlri *parse_mp_unreach_nlri(unsigned char **body, uint16_t attr_length);
 
-struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
+struct bgp_path_attribute *parse_update_attr(unsigned char **body, int four_octet_asn) {
     unsigned char **pos = body;
     struct bgp_path_attribute *attr;
 
@@ -561,7 +646,7 @@ struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
     attr->flags = uchar_to_uint8_inc(pos);
     attr->type = uchar_to_uint8_inc(pos);
 
-    
+
     //One or two octet length?
     if (attr->flags & 0x16) {
         attr->length = uchar_be_to_uint16_inc(pos);
@@ -575,7 +660,7 @@ struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
             break;
         case AS_PATH:
             if (attr->length > 0) {
-                attr->as_path = parse_update_as_path(pos, attr->length);
+                attr->as_path = parse_update_as_path(pos, attr->length, four_octet_asn);
             }
             break;
         case NEXT_HOP:
@@ -591,7 +676,17 @@ struct bgp_path_attribute *parse_update_attr(unsigned char **body) {
             //Length of zero, type is enough to define this
             break;
         case AGGREGATOR:
-            attr->aggregator = parse_update_aggregator(pos);
+            attr->aggregator = parse_update_aggregator(pos, four_octet_asn);
+            break;
+        case COMMUNITY:
+            if (attr->length > 0) {
+                attr->community = parse_update_community(pos, attr->length);
+            }
+            break;
+        case LARGE_COMMUNITY:
+            if (attr->length > 0) {
+                attr->large_community = parse_update_large_community(pos, attr->length);
+            }
             break;
         case MP_REACH_NLRI:
             if (attr->length > 0) {
@@ -864,7 +959,7 @@ struct mp_unreach_nlri *parse_mp_unreach_nlri(unsigned char **body, uint16_t att
 }
 
 
-int parse_update(struct bgp_msg *message, unsigned char *body) {
+int parse_update(struct bgp_msg *message, unsigned char *body, int four_octet_asn) {
     unsigned char *pos = body;
     struct ipv4_nlri *nlri;
 
@@ -928,7 +1023,7 @@ int parse_update(struct bgp_msg *message, unsigned char *body) {
         int n_attr = 0;
 
         while(pos < (pa_start + message->update->path_attr_length)) {
-            attr = parse_update_attr(&pos);
+            attr = parse_update_attr(&pos, four_octet_asn);
 
             if (!attr) {
                 free(message->update);

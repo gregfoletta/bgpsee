@@ -302,8 +302,10 @@ json_t *construct_json_med(struct bgp_path_attribute *);
 json_t *construct_json_local_pref(struct bgp_path_attribute *);
 json_t *construct_json_atomic_aggregate(struct bgp_path_attribute *);
 json_t *construct_json_aggregator(struct bgp_path_attribute *);
+json_t *construct_json_community(struct bgp_path_attribute *);
 json_t *construct_json_mp_reach(struct bgp_path_attribute *);
 json_t *construct_json_mp_unreach(struct bgp_path_attribute *);
+json_t *construct_json_large_community(struct bgp_path_attribute *);
 
 json_t *construct_json_update(struct bgp_msg *msg) {
     struct list_head *i;
@@ -317,12 +319,13 @@ json_t *construct_json_update(struct bgp_msg *msg) {
         "MULTI_EXIT_DISC",
         "LOCAL_PREF",
         "ATOMIC_AGGREGATE",
-        "AGGREGATOR"
+        "AGGREGATOR",
+        "COMMUNITY"
     };
 
 
     //+1 to account for 0 at the start
-    json_t *(*path_attr_dispatch[AGGREGATOR + 1]) (struct bgp_path_attribute *) = {
+    json_t *(*path_attr_dispatch[COMMUNITY + 1]) (struct bgp_path_attribute *) = {
         NULL,
         &construct_json_pa_origin,
         &construct_json_pa_as_path,
@@ -330,7 +333,8 @@ json_t *construct_json_update(struct bgp_msg *msg) {
         &construct_json_med,
         &construct_json_local_pref,
         &construct_json_atomic_aggregate,
-        &construct_json_aggregator
+        &construct_json_aggregator,
+        &construct_json_community
     };
 
     json_t *leaf = json_object();
@@ -348,7 +352,7 @@ json_t *construct_json_update(struct bgp_msg *msg) {
     //Path attributes
     json_object_set_new( leaf, "path_attribute_length", json_integer(msg->update->path_attr_length) );
     json_t *path_attributes = json_object();
-    for (int x = 0; x <= AGGREGATOR; x++) {
+    for (int x = 0; x <= COMMUNITY; x++) {
         if (!msg->update->path_attrs[x] || !path_attr_dispatch[x]) {
             continue;
         }
@@ -375,6 +379,15 @@ json_t *construct_json_update(struct bgp_msg *msg) {
             path_attributes,
             "MP_UNREACH_NLRI",
             construct_json_mp_unreach(msg->update->path_attrs[MP_UNREACH_NLRI])
+        );
+    }
+
+    /* Handle LARGE_COMMUNITY (type 32) */
+    if (msg->update->path_attrs[LARGE_COMMUNITY]) {
+        json_object_set_new(
+            path_attributes,
+            "LARGE_COMMUNITY",
+            construct_json_large_community(msg->update->path_attrs[LARGE_COMMUNITY])
         );
     }
 
@@ -484,6 +497,53 @@ json_t *construct_json_aggregator(struct bgp_path_attribute *attr) {
     free(agg_ip_str);
 
     return aggregator;
+}
+
+json_t *construct_json_community(struct bgp_path_attribute *attr) {
+    json_t *communities = json_array();
+
+    if (!attr->community) {
+        return communities;
+    }
+
+    for (uint16_t i = 0; i < attr->community->n_communities; i++) {
+        uint32_t val = attr->community->communities[i];
+        char buf[32];
+
+        if (val == 0xFFFFFF01) {
+            json_array_append_new(communities, json_string("NO_EXPORT"));
+        } else if (val == 0xFFFFFF02) {
+            json_array_append_new(communities, json_string("NO_ADVERTISE"));
+        } else if (val == 0xFFFFFF03) {
+            json_array_append_new(communities, json_string("NO_EXPORT_SUBCONFED"));
+        } else {
+            uint16_t high = (uint16_t)(val >> 16);
+            uint16_t low = (uint16_t)(val & 0xFFFF);
+            snprintf(buf, sizeof(buf), "%u:%u", high, low);
+            json_array_append_new(communities, json_string(buf));
+        }
+    }
+
+    return communities;
+}
+
+json_t *construct_json_large_community(struct bgp_path_attribute *attr) {
+    json_t *communities = json_array();
+
+    if (!attr->large_community) {
+        return communities;
+    }
+
+    for (uint16_t i = 0; i < attr->large_community->n_communities; i++) {
+        char buf[48];
+        snprintf(buf, sizeof(buf), "%u:%u:%u",
+                 attr->large_community->communities[i].global_admin,
+                 attr->large_community->communities[i].local_data_1,
+                 attr->large_community->communities[i].local_data_2);
+        json_array_append_new(communities, json_string(buf));
+    }
+
+    return communities;
 }
 
 json_t *construct_json_mp_reach(struct bgp_path_attribute *attr) {

@@ -13,10 +13,10 @@ struct bgp_peer;
 struct bgp_instance;
 struct bgp_local;
 
-struct bgp_instance *create_bgp_instance(uint16_t,  uint32_t, uint8_t);
+struct bgp_instance *create_bgp_instance(uint32_t,  uint32_t, uint8_t);
 void free_bgp_instance(struct bgp_instance *);
 
-unsigned int create_bgp_peer(struct bgp_instance *, const char *, const uint16_t, const char *);
+unsigned int create_bgp_peer(struct bgp_instance *, const char *, const uint32_t, const char *);
 unsigned int bgp_peer_source(struct bgp_instance *, unsigned int, const char *);
 
 int set_bgp_output(struct bgp_instance *, unsigned int, enum bgp_output);

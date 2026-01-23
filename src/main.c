@@ -22,8 +22,8 @@ struct cmdline_opts {
     char *peer;
     char *name;
     sds source_ip;
-    uint16_t peer_asn;
-    uint16_t local_asn;
+    uint32_t peer_asn;
+    uint32_t local_asn;
     uint32_t local_rid;
     enum bgp_output format;
     int reconnect_enabled;
@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
 
     //Parse the peers
     for(int x = optind; x < argc; x++) {
-        uint16_t asn;
+        uint32_t asn;
         int bgp_peer_id;
         //Split the peer into IP:ASN
         sds *tokens;
@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
         if (n_tokens == 3) {
             peer_name = sdsdup(tokens[2]);
         }
-        asn = (uint16_t) strtol(tokens[1], NULL, 10);
+        asn = (uint32_t) strtoul(tokens[1], NULL, 10);
 
         //Create the peer and keep track of the used ID
         bgp_peer_id = create_bgp_peer(
@@ -198,7 +198,7 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
                 option_return.source_ip = sdsnew(optarg);
                 break;
             case 'a':
-                option_return.local_asn = (uint16_t) strtol(optarg, NULL, 10);
+                option_return.local_asn = (uint32_t) strtoul(optarg, NULL, 10);
                 break;
             case 'r':
                 option_return.local_rid = (uint16_t) strtol(optarg, NULL, 10);

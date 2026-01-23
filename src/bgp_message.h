@@ -40,7 +40,7 @@ struct bgp_open {
 struct path_segment {
     uint8_t type;
     uint8_t n_as;
-    uint16_t *as;
+    uint32_t *as;  // 4-byte ASNs (RFC 6793)
     struct list_head list;
 };
 
@@ -51,8 +51,24 @@ struct as_path {
 };
 
 struct aggregator {
-    uint16_t asn;
+    uint32_t asn;  // 4-byte ASN (RFC 6793)
     uint32_t ip;
+};
+
+struct community {
+    uint16_t n_communities;
+    uint32_t *communities;
+};
+
+struct large_community_value {
+    uint32_t global_admin;
+    uint32_t local_data_1;
+    uint32_t local_data_2;
+};
+
+struct large_community {
+    uint16_t n_communities;
+    struct large_community_value *communities;
 };
 
 struct bgp_path_attribute {
@@ -68,6 +84,8 @@ struct bgp_path_attribute {
         uint32_t local_pref;
         //Atomic aggregate is length zero, defined only by the type
         struct aggregator *aggregator;
+        struct community *community;
+        struct large_community *large_community;
         struct mp_reach_nlri *mp_reach;
         struct mp_unreach_nlri *mp_unreach;
     };
@@ -134,9 +152,12 @@ enum bgp_update_attrs {
     LOCAL_PREF,
     ATOMIC_AGGREGATE,
     AGGREGATOR,
+    COMMUNITY,
     /* ... gap ... */
     MP_REACH_NLRI = 14,
-    MP_UNREACH_NLRI = 15
+    MP_UNREACH_NLRI = 15,
+    /* ... gap ... */
+    LARGE_COMMUNITY = 32
 };
 
 #define MAX_ATTRIBUTE 255
@@ -223,7 +244,12 @@ struct bgp_msg {
 
 
 
-struct bgp_msg *recv_msg(int socket_fd);
+/*
+ * Receive and parse a BGP message from the socket.
+ * Uses peer->socket.fd for the socket and peer->four_octet_asn for AS_PATH parsing.
+ */
+struct bgp_peer;
+struct bgp_msg *recv_msg(struct bgp_peer *peer);
 struct bgp_msg *alloc_sent_msg(void);
 int free_msg(struct bgp_msg *);
 ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time,

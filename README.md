@@ -21,13 +21,13 @@ BGPSee is a multi-threaded BGP client for the CLI. Its goal is to allow you to q
 
 # Version
 
-Current version is **0.0.7**
+Current version is **0.0.8**
 
-Major changes from **0.0.6** to **0.0.7**:
-- Automatic reconnection with exponential backoff (`-R` flag)
-- Output queue for reliable keepalive handling on slow connections
-- Hold time negotiation per RFC 4271
-- FSM race condition fixes 
+Major changes from **0.0.7** to **0.0.8**:
+- 4-byte ASN support (RFC 6793)
+- COMMUNITY path attribute parsing (RFC 1997)
+- LARGE_COMMUNITY path attribute parsing (RFC 8092)
+- Timestamp added to log messages
 
 See the [CHANGELOG](CHANGELOG.md) for further information.
 

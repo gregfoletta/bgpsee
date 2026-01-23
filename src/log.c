@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdarg.h>
+#include <time.h>
 
 #include "sds.h"
 #include "log.h"
@@ -52,29 +53,36 @@ void log_print(enum LOG_LEVEL level, const char *format, ... ) {
 
 sds log_prefix(enum LOG_LEVEL level) {
     sds prefix;
+    time_t now;
+    struct tm *tm_info;
+    char timestamp[32];
+
+    time(&now);
+    tm_info = localtime(&now);
+    strftime(timestamp, sizeof(timestamp), "[%Y-%m-%d %H:%M:%S] ", tm_info);
 
     switch (level) {
         case LOG_NONE:
-            prefix = sdsempty();
+            prefix = sdsnew(timestamp);
             break;
         case LOG_ERROR:
             //Bold Red
-            prefix = sdsnew("\033[1;31m- ");
+            prefix = sdscatprintf(sdsempty(), "%s\033[1;31m- ", timestamp);
             break;
         case LOG_WARN:
             //Bold Yellow
-            prefix = sdsnew("\033[1;33m- ");
+            prefix = sdscatprintf(sdsempty(), "%s\033[1;33m- ", timestamp);
             break;
         case LOG_INFO:
             //Bold green then reset
-            prefix = sdsnew("\033[1;32m- \033[0;m");
+            prefix = sdscatprintf(sdsempty(), "%s\033[1;32m- \033[0;m", timestamp);
             break;
         case LOG_DEBUG:
             //Bold Blue then reset
-            prefix = sdsnew("\033[1;36m+ \033[0;m");
+            prefix = sdscatprintf(sdsempty(), "%s\033[1;36m+ \033[0;m", timestamp);
             break;
         default:
-            prefix = sdsempty();
+            prefix = sdsnew(timestamp);
             break;
     }
 

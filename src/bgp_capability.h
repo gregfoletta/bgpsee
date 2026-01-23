@@ -126,3 +126,9 @@ struct bgp_capabilities *bgp_capabilities_parse(const unsigned char *opt_params,
  * Returns a static string describing the capability
  */
 const char *bgp_capability_name(uint8_t code);
+
+/*
+ * Check if 4-octet ASN capability is present and extract the ASN
+ * Returns 1 if present (and sets *asn to the 4-byte ASN), 0 if not present
+ */
+int bgp_capabilities_has_four_octet_asn(const struct bgp_capabilities *caps, uint32_t *asn);
