@@ -1,4 +1,8 @@
-CC   := gcc
+# Allow CC override from command line or environment; default to gcc
+ifeq ($(origin CC),default)
+CC := gcc
+endif
+
 SRC_DIR := src
 OBJ_DIR := obj
 OBJ_DEBUG_DIR := obj-debug
@@ -13,13 +17,20 @@ BIN := bgpsee
 # Warning flags (shared between release and debug)
 WARN_FLAGS := -Wall -Wshadow -Wextra -fvisibility=hidden -Wvla -Wconversion -Wdouble-promotion -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion
 
+# GCC-only flags (not supported by clang)
+IS_GCC := $(shell $(CC) -v 2>&1 | grep -q "gcc version" && echo 1)
+ifeq ($(IS_GCC),1)
+  GCC_ANALYZER := -fanalyzer
+  GCC_STATIC_ASAN := -static-libasan
+endif
+
 # Release build flags
 CFLAGS := $(WARN_FLAGS) -O2
 LDFLAGS := -ljansson -pthread
 
 # Debug build flags
-DEBUG_CFLAGS := $(WARN_FLAGS) -g3 -fanalyzer -fsanitize=address,undefined
-DEBUG_LDFLAGS := -ljansson -pthread -static-libasan -fsanitize=address,undefined
+DEBUG_CFLAGS := $(WARN_FLAGS) -g3 $(GCC_ANALYZER) -fsanitize=address,undefined
+DEBUG_LDFLAGS := -ljansson -pthread $(GCC_STATIC_ASAN) -fsanitize=address,undefined
 
 # Test flags
 TEST_CFLAGS := -Wall -g3 -Wno-unused-parameter -fsanitize=address,undefined

@@ -19,7 +19,7 @@ int tcp_connect(sds host, const char *port, sds source) {
     int sock_fd = -1, ret;
     struct addrinfo hints, *result, *result_head;
 
-    bzero(&hints, sizeof(hints));
+    memset(&hints, 0, sizeof(hints));
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 

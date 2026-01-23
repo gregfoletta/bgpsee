@@ -1,6 +1,8 @@
 #pragma once
 
 #include <stdint.h>
+#include <time.h>
+
 #include <sys/select.h>
 
 
@@ -20,8 +22,15 @@ enum timer {
 
 
 struct bgp_local_timer {
+    time_t duration_sec;
+    int recurring;
+#ifdef __linux__
     struct itimerspec timeout;
     int fd;
+#else
+    struct timespec expiry;  // absolute time when timer fires (0 = disarmed)
+    int armed;
+#endif
 };
 
 int initialise_local_timers(struct bgp_local_timer *);

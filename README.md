@@ -4,6 +4,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Language: C](https://img.shields.io/badge/Language-C-orange.svg)](https://en.wikipedia.org/wiki/C_(programming_language))
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-lightgrey.svg)](https://www.linux.org/)
+[![Platform: macOS](https://img.shields.io/badge/Platform-macOS-lightgrey.svg)](https://www.apple.com/macos/)
 
 <p align="center">
   <img src="https://github.com/gregfoletta/bgpsee/blob/master/img/logo.png"/>
@@ -138,6 +139,9 @@ sudo apt install libjansson-dev
 
 # Red Hat based distros
 sudo yum install jansson-devel
+
+# macOS (Homebrew)
+brew install jansson
 ```
 
 To build simply download/clone and build using make:
