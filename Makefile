@@ -24,17 +24,27 @@ ifeq ($(IS_GCC),1)
   GCC_STATIC_ASAN := -static-libasan
 endif
 
+# macOS: add Homebrew include/lib paths
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  HOMEBREW_PREFIX := $(shell brew --prefix 2>/dev/null)
+  ifneq ($(HOMEBREW_PREFIX),)
+    BREW_CFLAGS := -I$(HOMEBREW_PREFIX)/include
+    BREW_LDFLAGS := -L$(HOMEBREW_PREFIX)/lib
+  endif
+endif
+
 # Release build flags
-CFLAGS := $(WARN_FLAGS) -O2
-LDFLAGS := -ljansson -pthread
+CFLAGS := $(WARN_FLAGS) $(BREW_CFLAGS) -O2
+LDFLAGS := -ljansson -pthread $(BREW_LDFLAGS)
 
 # Debug build flags
-DEBUG_CFLAGS := $(WARN_FLAGS) -g3 $(GCC_ANALYZER) -fsanitize=address,undefined
-DEBUG_LDFLAGS := -ljansson -pthread $(GCC_STATIC_ASAN) -fsanitize=address,undefined
+DEBUG_CFLAGS := $(WARN_FLAGS) $(BREW_CFLAGS) -g3 $(GCC_ANALYZER) -fsanitize=address,undefined
+DEBUG_LDFLAGS := -ljansson -pthread $(BREW_LDFLAGS) $(GCC_STATIC_ASAN) -fsanitize=address,undefined
 
 # Test flags
-TEST_CFLAGS := -Wall -g3 -Wno-unused-parameter -fsanitize=address,undefined
-TEST_LDFLAGS := -ljansson -pthread -fsanitize=address,undefined
+TEST_CFLAGS := -Wall -g3 -Wno-unused-parameter $(BREW_CFLAGS) -fsanitize=address,undefined
+TEST_LDFLAGS := -ljansson -pthread $(BREW_LDFLAGS) -fsanitize=address,undefined
 
 .PHONY: all debug clean test test-byte-conv test-bgp-message
 
