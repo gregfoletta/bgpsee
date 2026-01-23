@@ -251,7 +251,7 @@ static json_t *construct_json_capability(struct bgp_capability *cap) {
                 char *hex = malloc((size_t)(cap->length * 2 + 1));
                 if (hex) {
                     for (int i = 0; i < cap->length; i++) {
-                        sprintf(hex + i * 2, "%02x", cap->value[i]);
+                        snprintf(hex + i * 2, 3, "%02x", cap->value[i]);
                     }
                     json_object_set_new(cap_obj, "value_hex", json_string(hex));
                     free(hex);
