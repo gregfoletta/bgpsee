@@ -473,8 +473,10 @@ ssize_t send_open(int fd, uint8_t version, uint16_t asn, uint16_t hold_time,
 
 //GCC thinks seg is leaked, but it's added to the as path segment and
 //freed in free_as_path()
+#ifndef __clang__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
+#endif
 struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length, int four_octet_asn) {
     struct as_path *path;
     struct path_segment *seg;
@@ -553,7 +555,9 @@ struct as_path *parse_update_as_path(unsigned char **body, uint16_t attr_length,
     return NULL;
 
 }
+#ifndef __clang__
 #pragma GCC diagnostic pop
+#endif
 
 struct aggregator *parse_update_aggregator(unsigned char **body, int four_octet_asn) {
     struct aggregator *agg;
@@ -1020,7 +1024,6 @@ int parse_update(struct bgp_msg *message, unsigned char *body, int four_octet_as
     if (message->update->path_attr_length > 0) {
         unsigned char *pa_start = pos;
         struct bgp_path_attribute *attr;
-        int n_attr = 0;
 
         while(pos < (pa_start + message->update->path_attr_length)) {
             attr = parse_update_attr(&pos, four_octet_asn);
@@ -1031,7 +1034,6 @@ int parse_update(struct bgp_msg *message, unsigned char *body, int four_octet_as
             }
 
             message->update->path_attrs[ attr->type ] = attr;
-            n_attr++;
         }
     }
 
