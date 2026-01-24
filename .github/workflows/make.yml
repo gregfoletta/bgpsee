@@ -2,13 +2,13 @@ name: Build and Test
 
 on:
   push:
-    branches: [ "master", "development" ]
+    branches: [ "master", "development", "mac" ]
   pull_request:
     branches: [ "master", "development" ]
 
 jobs:
-  build:
-    name: Build
+  build-linux:
+    name: Build (Linux)
     runs-on: ubuntu-latest
 
     steps:
@@ -26,10 +26,29 @@ jobs:
     - name: Build debug
       run: make clean && make debug
 
-  test:
-    name: Test
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout repo and submodules
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Install dependencies
+      run: brew install jansson
+
+    - name: Build release
+      run: make
+
+    - name: Build debug
+      run: make clean && make debug
+
+  test-linux:
+    name: Test (Linux)
     runs-on: ubuntu-latest
-    needs: build
+    needs: build-linux
 
     steps:
     - name: Checkout repo and submodules
@@ -39,6 +58,23 @@ jobs:
 
     - name: Install dependencies
       run: sudo apt-get update && sudo apt-get install -y libjansson-dev
+
+    - name: Run tests
+      run: make test
+
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-latest
+    needs: build-macos
+
+    steps:
+    - name: Checkout repo and submodules
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Install dependencies
+      run: brew install jansson
 
     - name: Run tests
       run: make test

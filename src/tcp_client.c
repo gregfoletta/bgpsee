@@ -13,13 +13,15 @@
 
 // GCC analyzer incorrectly thinks connect() after bind() is invalid.
 // bind() before connect() is valid for TCP clients (sets source address).
+#ifndef __clang__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wanalyzer-fd-phase-mismatch"
+#endif
 int tcp_connect(sds host, const char *port, sds source) {
     int sock_fd = -1, ret;
     struct addrinfo hints, *result, *result_head;
 
-    bzero(&hints, sizeof(hints));
+    memset(&hints, 0, sizeof(hints));
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
@@ -98,4 +100,6 @@ int tcp_connect(sds host, const char *port, sds source) {
 
     return sock_fd;
 }
+#ifndef __clang__
 #pragma GCC diagnostic pop
+#endif

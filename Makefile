@@ -1,4 +1,8 @@
-CC   := gcc
+# Allow CC override from command line or environment; default to gcc
+ifeq ($(origin CC),default)
+CC := gcc
+endif
+
 SRC_DIR := src
 OBJ_DIR := obj
 OBJ_DEBUG_DIR := obj-debug
@@ -13,17 +17,34 @@ BIN := bgpsee
 # Warning flags (shared between release and debug)
 WARN_FLAGS := -Wall -Wshadow -Wextra -fvisibility=hidden -Wvla -Wconversion -Wdouble-promotion -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion
 
+# GCC-only flags (not supported by clang)
+IS_GCC := $(shell $(CC) -v 2>&1 | grep -q "gcc version" && echo 1)
+ifeq ($(IS_GCC),1)
+  GCC_ANALYZER := -fanalyzer
+  GCC_STATIC_ASAN := -static-libasan
+endif
+
+# macOS: add Homebrew include/lib paths
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  HOMEBREW_PREFIX := $(shell brew --prefix 2>/dev/null)
+  ifneq ($(HOMEBREW_PREFIX),)
+    BREW_CFLAGS := -I$(HOMEBREW_PREFIX)/include
+    BREW_LDFLAGS := -L$(HOMEBREW_PREFIX)/lib
+  endif
+endif
+
 # Release build flags
-CFLAGS := $(WARN_FLAGS) -O2
-LDFLAGS := -ljansson -pthread
+CFLAGS := $(WARN_FLAGS) $(BREW_CFLAGS) -O2
+LDFLAGS := -ljansson -pthread $(BREW_LDFLAGS)
 
 # Debug build flags
-DEBUG_CFLAGS := $(WARN_FLAGS) -g3 -fanalyzer -fsanitize=address,undefined
-DEBUG_LDFLAGS := -ljansson -pthread -static-libasan -fsanitize=address,undefined
+DEBUG_CFLAGS := $(WARN_FLAGS) $(BREW_CFLAGS) -g3 $(GCC_ANALYZER) -fsanitize=address,undefined
+DEBUG_LDFLAGS := -ljansson -pthread $(BREW_LDFLAGS) $(GCC_STATIC_ASAN) -fsanitize=address,undefined
 
 # Test flags
-TEST_CFLAGS := -Wall -g3 -Wno-unused-parameter -fsanitize=address,undefined
-TEST_LDFLAGS := -ljansson -pthread -fsanitize=address,undefined
+TEST_CFLAGS := -Wall -g3 -Wno-unused-parameter $(BREW_CFLAGS) -fsanitize=address,undefined
+TEST_LDFLAGS := -ljansson -pthread $(BREW_LDFLAGS) -fsanitize=address,undefined
 
 .PHONY: all debug clean test test-byte-conv test-bgp-message
 

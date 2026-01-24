@@ -4,6 +4,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Language: C](https://img.shields.io/badge/Language-C-orange.svg)](https://en.wikipedia.org/wiki/C_(programming_language))
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-lightgrey.svg)](https://www.linux.org/)
+[![Platform: macOS](https://img.shields.io/badge/Platform-macOS-lightgrey.svg)](https://www.apple.com/macos/)
 
 <p align="center">
   <img src="https://github.com/gregfoletta/bgpsee/blob/master/img/logo.png"/>
@@ -128,6 +129,10 @@ Here's an example of *bgpsee* peering with an external router. You only see BGP 
 
 We see a connection to an external router, with the peer router sending an OPEN and an immediate KEEPALIVE signalling it accepts the OPEN message we sent. After 5 seconds the peer starts sending UPDATEs from all of the paths it has. This router has a full BGP table, and shown is one of the paths that contains most of the path attributes, including AGGREGATOR and an AS_PATH with AS segments.
 
+# Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed description of the threading model, key data structures, BGP FSM implementation, and message flow.
+
 # Building
 
 As of version 0.0.3, *bgpsee* now requires libjansson. You'll need to install the development libraries before building, for example
@@ -138,6 +143,9 @@ sudo apt install libjansson-dev
 
 # Red Hat based distros
 sudo yum install jansson-devel
+
+# macOS (Homebrew)
+brew install jansson
 ```
 
 To build simply download/clone and build using make:
@@ -180,8 +188,5 @@ Please report bugs and crashes by [opening an issue](https://github.com/gregfole
 # Roadmap
 
 Top 3 items to add in future releases:
-
-- Expansion on the BGP Path Attribute handling, with a priority on:
-    - [COMMUNITY](https://www.iana.org/go/rfc1997)
-    - [EXTENDED COMMUNITIES](https://www.iana.org/go/rfc4360)
-    - [MP_REACH_NLRI](https://www.iana.org/go/rfc4760)
+- VPNv4 Address Family (AFI: 1, SAFI: 1)
+- EVPN Address Family (AFI: 25, SAFI: 70)

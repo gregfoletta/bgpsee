@@ -149,10 +149,7 @@ void reset_backoff(struct bgp_peer *peer) {
  * setup_reconnect_timer() - Arm IdleHoldTimer with current backoff value
  */
 int setup_reconnect_timer(struct bgp_peer *peer) {
-    peer->local_timers[IdleHoldTimer].timeout.it_value.tv_sec = peer->reconnect_backoff_current;
-    peer->local_timers[IdleHoldTimer].timeout.it_value.tv_nsec = 0;
-    peer->local_timers[IdleHoldTimer].timeout.it_interval.tv_sec = 0;
-    peer->local_timers[IdleHoldTimer].timeout.it_interval.tv_nsec = 0;
+    set_timer_value(peer->local_timers, IdleHoldTimer, peer->reconnect_backoff_current);
     return start_timer(peer->local_timers, IdleHoldTimer);
 }
 
@@ -468,24 +465,25 @@ struct peer_fd_set {
 
 int get_read_fd_set(struct bgp_peer *peer, fd_set *set) {
     int max_fd = 0;
-    int temp_fd = 0;
-    //Set up the select() set  
+    //Set up the select() set
 
     FD_ZERO(set);
 
+#ifdef __linux__
     //Add all of the timer FDs, and keep track of the max
     for (int timer_id = 0; timer_id < N_LOCAL_TIMERS; timer_id++) {
-        temp_fd = peer->local_timers[timer_id].fd;
+        int temp_fd = peer->local_timers[timer_id].fd;
         FD_SET(temp_fd, set);
         max_fd = (temp_fd > max_fd) ? temp_fd : max_fd;
     }
+#endif
 
     //Add our socket FD (which may not be valid yet)
     if (peer->socket.fd > 0) {
-        FD_SET(peer->socket.fd, set);   
+        FD_SET(peer->socket.fd, set);
         max_fd = (peer->socket.fd > max_fd) ? peer->socket.fd : max_fd;
     }
-    
+
     //Return the max file descriptor
     return max_fd;
 }
