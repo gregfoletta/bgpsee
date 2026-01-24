@@ -20,6 +20,21 @@ BGPSee is a multi-threaded BGP client for the CLI. Its goal is to allow you to q
 - **Graceful shutdown** - Sends proper CEASE notifications when disconnecting
 - **Lightweight** - No heavy dependencies, just libjansson for JSON support
 
+## What It Doesn't Do
+
+BGPSee is a passive observation tool, not a routing daemon. Compared to an RFC-compliant implementation (FRR, BIRD, OpenBGPd):
+
+- **No route installation** - Does not install received routes into the kernel RIB/FIB
+- **No route advertisement** - Does not originate or advertise any routes to peers
+- **No best path selection** - Does not run the BGP decision process over received paths
+- **No route policy** - No import/export filters, route-maps, or prefix-lists
+- **No route reflection or confederations** - No RR client/non-client or sub-AS handling
+- **No graceful restart** - Does not preserve forwarding state across restarts
+- **No BFD integration** - No fast failure detection via BFD
+- **No route redistribution** - Does not exchange routes with other protocols (OSPF, IS-IS, static)
+
+In short, BGPSee establishes a session, receives UPDATEs, and outputs them as JSON. It never influences forwarding.
+
 # Version
 
 Current version is **0.0.8**
@@ -164,11 +179,14 @@ Run the test suite with:
 make test
 ```
 
-This runs 73 tests covering:
+This runs 281 tests covering:
 - Byte conversion functions (big-endian network byte order)
 - BGP message parsing (OPEN, UPDATE, KEEPALIVE, NOTIFICATION)
+- MP_REACH/MP_UNREACH (IPv6, EVPN)
+- EVPN route types 1-5 (MAC/IP, Inclusive Multicast, IP Prefix, etc.)
+- Capability negotiation encoding/decoding
 - NOTIFICATION message generation
-- Invalid input handling (security tests)
+- Invalid input handling (truncated data, bad lengths)
 
 For development, use the debug build which includes AddressSanitizer and UndefinedBehaviorSanitizer:
 ```bash
@@ -187,6 +205,5 @@ Please report bugs and crashes by [opening an issue](https://github.com/gregfole
 
 # Roadmap
 
-Top 3 items to add in future releases:
-- VPNv4 Address Family (AFI: 1, SAFI: 1)
-- EVPN Address Family (AFI: 25, SAFI: 70)
+Top items to add in future releases:
+- VPNv4 Address Family (AFI: 1, SAFI: 128)
