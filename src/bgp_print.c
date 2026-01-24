@@ -171,9 +171,10 @@ char *format_msg_jsonl(struct bgp_msg *msg) {
 /* Helper to get AFI name string */
 static const char *afi_name(uint16_t afi) {
     switch (afi) {
-        case BGP_AFI_IPV4: return "IPv4";
-        case BGP_AFI_IPV6: return "IPv6";
-        default:           return "Unknown";
+        case BGP_AFI_IPV4:  return "IPv4";
+        case BGP_AFI_IPV6:  return "IPv6";
+        case BGP_AFI_L2VPN: return "L2VPN";
+        default:            return "Unknown";
     }
 }
 
@@ -183,6 +184,7 @@ static const char *safi_name(uint8_t safi) {
         case BGP_SAFI_UNICAST:   return "Unicast";
         case BGP_SAFI_MULTICAST: return "Multicast";
         case BGP_SAFI_MPLS:      return "MPLS";
+        case BGP_SAFI_EVPN:      return "EVPN";
         default:                 return "Unknown";
     }
 }
@@ -546,6 +548,189 @@ json_t *construct_json_large_community(struct bgp_path_attribute *attr) {
     return communities;
 }
 
+/* EVPN formatting helpers */
+
+static void format_mac_address(char *buf, size_t len, const uint8_t *mac) {
+    snprintf(buf, len, "%02x:%02x:%02x:%02x:%02x:%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+static void format_esi(char *buf, size_t len, const uint8_t *esi) {
+    snprintf(buf, len, "%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x",
+             esi[0], esi[1], esi[2], esi[3], esi[4],
+             esi[5], esi[6], esi[7], esi[8], esi[9]);
+}
+
+static void format_rd(char *buf, size_t len, uint16_t type, const uint8_t *value) {
+    unsigned char *v = (unsigned char *)value;
+    switch (type) {
+    case 0: {
+        /* Type 0: 2-byte admin : 4-byte number */
+        uint16_t admin = uchar_be_to_uint16(v);
+        uint32_t number = uchar_be_to_uint32(v + 2);
+        snprintf(buf, len, "%u:%u", admin, number);
+        break;
+    }
+    case 1: {
+        /* Type 1: 4-byte IP : 2-byte number */
+        uint16_t number = uchar_be_to_uint16(v + 4);
+        snprintf(buf, len, "%u.%u.%u.%u:%u",
+                 value[0], value[1], value[2], value[3], number);
+        break;
+    }
+    case 2: {
+        /* Type 2: 4-byte ASN : 2-byte number */
+        uint32_t asn = uchar_be_to_uint32(v);
+        uint16_t number = uchar_be_to_uint16(v + 4);
+        snprintf(buf, len, "%u:%u", asn, number);
+        break;
+    }
+    default:
+        snprintf(buf, len, "%u:%02x%02x%02x%02x%02x%02x",
+                 type, value[0], value[1], value[2], value[3], value[4], value[5]);
+        break;
+    }
+}
+
+static void format_evpn_ip(char *buf, size_t len, const uint8_t *ip, uint8_t ip_len_bits) {
+    if (ip_len_bits == 32) {
+        snprintf(buf, len, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+    } else if (ip_len_bits == 128) {
+        /* Use RFC 5952 compressed format */
+        unsigned char *addr = (unsigned char *)ip;
+        uint16_t groups[8];
+        for (int i = 0; i < 8; i++) {
+            groups[i] = uchar_be_to_uint16(addr + i * 2);
+        }
+        int best_start = -1, best_len = 1;
+        int cur_start = -1, cur_len = 0;
+        for (int i = 0; i < 8; i++) {
+            if (groups[i] == 0) {
+                if (cur_start == -1) cur_start = i;
+                cur_len++;
+            } else {
+                if (cur_len > best_len) {
+                    best_start = cur_start;
+                    best_len = cur_len;
+                }
+                cur_start = -1;
+                cur_len = 0;
+            }
+        }
+        if (cur_len > best_len) {
+            best_start = cur_start;
+            best_len = cur_len;
+        }
+        char *p = buf;
+        char *endp = buf + len;
+        for (int i = 0; i < 8 && p < endp; i++) {
+            if (best_start >= 0 && i == best_start) {
+                p += snprintf(p, (size_t)(endp - p), "::");
+                i += best_len - 1;
+            } else {
+                if (i > 0 && !(best_start >= 0 && i == best_start + best_len)) {
+                    p += snprintf(p, (size_t)(endp - p), ":");
+                }
+                p += snprintf(p, (size_t)(endp - p), "%x", groups[i]);
+            }
+        }
+    } else {
+        buf[0] = '\0';
+    }
+}
+
+static const char *evpn_route_type_name(uint8_t type) {
+    switch (type) {
+    case EVPN_ETH_AUTO_DISCOVERY: return "Ethernet Auto-Discovery";
+    case EVPN_MAC_IP_ADV:         return "MAC/IP Advertisement";
+    case EVPN_INCLUSIVE_MCAST:    return "Inclusive Multicast Ethernet Tag";
+    case EVPN_ETH_SEGMENT:       return "Ethernet Segment";
+    case EVPN_IP_PREFIX:          return "IP Prefix";
+    default:                      return "Unknown";
+    }
+}
+
+static json_t *construct_json_evpn_nlri(struct evpn_nlri *nlri) {
+    json_t *obj = json_object();
+    char buf[64];
+
+    json_object_set_new(obj, "route_type", json_integer(nlri->route_type));
+    json_object_set_new(obj, "route_type_name", json_string(evpn_route_type_name(nlri->route_type)));
+
+    /* RD (all types) */
+    format_rd(buf, sizeof(buf), nlri->rd_type, nlri->rd_value);
+    json_object_set_new(obj, "rd", json_string(buf));
+
+    switch (nlri->route_type) {
+    case EVPN_ETH_AUTO_DISCOVERY:
+        format_esi(buf, sizeof(buf), nlri->esi);
+        json_object_set_new(obj, "esi", json_string(buf));
+        json_object_set_new(obj, "ethernet_tag", json_integer(nlri->ethernet_tag));
+        if (nlri->mpls_label1) {
+            json_object_set_new(obj, "mpls_label", json_integer(nlri->mpls_label1));
+        }
+        break;
+
+    case EVPN_MAC_IP_ADV:
+        format_esi(buf, sizeof(buf), nlri->esi);
+        json_object_set_new(obj, "esi", json_string(buf));
+        json_object_set_new(obj, "ethernet_tag", json_integer(nlri->ethernet_tag));
+        format_mac_address(buf, sizeof(buf), nlri->mac);
+        json_object_set_new(obj, "mac", json_string(buf));
+        if (nlri->ip_length > 0) {
+            format_evpn_ip(buf, sizeof(buf), nlri->ip, nlri->ip_length);
+            json_object_set_new(obj, "ip", json_string(buf));
+        }
+        if (nlri->mpls_label1) {
+            json_object_set_new(obj, "mpls_label", json_integer(nlri->mpls_label1));
+        }
+        if (nlri->mpls_label2) {
+            json_object_set_new(obj, "mpls_label2", json_integer(nlri->mpls_label2));
+        }
+        break;
+
+    case EVPN_INCLUSIVE_MCAST:
+        json_object_set_new(obj, "ethernet_tag", json_integer(nlri->ethernet_tag));
+        if (nlri->ip_length > 0) {
+            format_evpn_ip(buf, sizeof(buf), nlri->ip, nlri->ip_length);
+            json_object_set_new(obj, "ip", json_string(buf));
+        }
+        break;
+
+    case EVPN_ETH_SEGMENT:
+        format_esi(buf, sizeof(buf), nlri->esi);
+        json_object_set_new(obj, "esi", json_string(buf));
+        if (nlri->ip_length > 0) {
+            format_evpn_ip(buf, sizeof(buf), nlri->ip, nlri->ip_length);
+            json_object_set_new(obj, "ip", json_string(buf));
+        }
+        break;
+
+    case EVPN_IP_PREFIX:
+        format_esi(buf, sizeof(buf), nlri->esi);
+        json_object_set_new(obj, "esi", json_string(buf));
+        json_object_set_new(obj, "ethernet_tag", json_integer(nlri->ethernet_tag));
+        if (nlri->ip_length > 0) {
+            format_evpn_ip(buf, sizeof(buf), nlri->ip, nlri->ip_length);
+            char prefix_buf[68];
+            snprintf(prefix_buf, sizeof(prefix_buf), "%s/%u", buf, nlri->prefix_length);
+            json_object_set_new(obj, "ip_prefix", json_string(prefix_buf));
+        }
+        if (nlri->ip_length == 32) {
+            format_evpn_ip(buf, sizeof(buf), nlri->gw_ip, 32);
+        } else {
+            format_evpn_ip(buf, sizeof(buf), nlri->gw_ip, 128);
+        }
+        json_object_set_new(obj, "gateway_ip", json_string(buf));
+        if (nlri->mpls_label1) {
+            json_object_set_new(obj, "mpls_label", json_integer(nlri->mpls_label1));
+        }
+        break;
+    }
+
+    return obj;
+}
+
 json_t *construct_json_mp_reach(struct bgp_path_attribute *attr) {
     json_t *mp = json_object();
     struct list_head *i;
@@ -572,12 +757,17 @@ json_t *construct_json_mp_reach(struct bgp_path_attribute *attr) {
 
     /* NLRI routes */
     json_t *nlri_array = json_array();
-    if (attr->mp_reach->afi == 2) {  /* IPv6 */
+    if (attr->mp_reach->afi == BGP_AFI_L2VPN) {
+        list_for_each(i, &attr->mp_reach->nlri) {
+            struct evpn_nlri *nlri = list_entry(i, struct evpn_nlri, list);
+            json_array_append_new(nlri_array, construct_json_evpn_nlri(nlri));
+        }
+    } else if (attr->mp_reach->afi == BGP_AFI_IPV6) {
         list_for_each(i, &attr->mp_reach->nlri) {
             struct ipv6_nlri *nlri = list_entry(i, struct ipv6_nlri, list);
             json_array_append_new(nlri_array, json_string(nlri->string));
         }
-    } else if (attr->mp_reach->afi == 1) {  /* IPv4 */
+    } else if (attr->mp_reach->afi == BGP_AFI_IPV4) {
         list_for_each(i, &attr->mp_reach->nlri) {
             struct ipv4_nlri *nlri = list_entry(i, struct ipv4_nlri, list);
             json_array_append_new(nlri_array, json_string(nlri->string));
@@ -603,12 +793,17 @@ json_t *construct_json_mp_unreach(struct bgp_path_attribute *attr) {
 
     /* Withdrawn routes */
     json_t *withdrawn_array = json_array();
-    if (attr->mp_unreach->afi == 2) {  /* IPv6 */
+    if (attr->mp_unreach->afi == BGP_AFI_L2VPN) {
+        list_for_each(i, &attr->mp_unreach->withdrawn) {
+            struct evpn_nlri *nlri = list_entry(i, struct evpn_nlri, list);
+            json_array_append_new(withdrawn_array, construct_json_evpn_nlri(nlri));
+        }
+    } else if (attr->mp_unreach->afi == BGP_AFI_IPV6) {
         list_for_each(i, &attr->mp_unreach->withdrawn) {
             struct ipv6_nlri *nlri = list_entry(i, struct ipv6_nlri, list);
             json_array_append_new(withdrawn_array, json_string(nlri->string));
         }
-    } else if (attr->mp_unreach->afi == 1) {  /* IPv4 */
+    } else if (attr->mp_unreach->afi == BGP_AFI_IPV4) {
         list_for_each(i, &attr->mp_unreach->withdrawn) {
             struct ipv4_nlri *nlri = list_entry(i, struct ipv4_nlri, list);
             json_array_append_new(withdrawn_array, json_string(nlri->string));

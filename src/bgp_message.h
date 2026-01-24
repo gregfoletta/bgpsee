@@ -115,6 +115,55 @@ struct ipv6_nlri {
 };
 
 /*
+ * EVPN Route Types (RFC 7432, RFC 9136)
+ */
+enum evpn_route_type {
+    EVPN_ETH_AUTO_DISCOVERY = 1,
+    EVPN_MAC_IP_ADV         = 2,
+    EVPN_INCLUSIVE_MCAST    = 3,
+    EVPN_ETH_SEGMENT       = 4,
+    EVPN_IP_PREFIX          = 5,
+};
+
+/*
+ * EVPN NLRI entry - stores parsed binary data from EVPN route
+ */
+struct evpn_nlri {
+    uint8_t route_type;
+    uint8_t route_length;         /* bytes of route-type-specific data */
+
+    /* Route Distinguisher (all types) */
+    uint16_t rd_type;
+    uint8_t rd_value[6];
+
+    /* Ethernet Segment Identifier (Type 1, 2, 4, 5) */
+    uint8_t esi[10];
+
+    /* Ethernet Tag (Type 1, 2, 3, 5) */
+    uint32_t ethernet_tag;
+
+    /* MAC Address (Type 2) */
+    uint8_t mac_length;           /* bits (48) */
+    uint8_t mac[6];
+
+    /* IP Address (Type 2, 3, 4, 5) */
+    uint8_t ip_length;            /* bits (0, 32, or 128) */
+    uint8_t ip[16];
+
+    /* Gateway IP (Type 5) */
+    uint8_t gw_ip[16];
+
+    /* IP prefix length (Type 5 only) */
+    uint8_t prefix_length;
+
+    /* MPLS Labels */
+    uint32_t mpls_label1;
+    uint32_t mpls_label2;         /* Type 2 optional L3 VNI */
+
+    struct list_head list;
+};
+
+/*
  * MP_REACH_NLRI (Type 14) - RFC 4760
  * Carries reachable routes for non-IPv4 unicast address families
  */

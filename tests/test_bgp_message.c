@@ -1216,6 +1216,796 @@ void test_update_mp_reach_dual_nexthop(void) {
     }
 }
 
+void test_evpn_type2_mac_ip(void) {
+    test_section("EVPN Type 2 - MAC/IP Advertisement");
+
+    /*
+     * UPDATE with MP_REACH_NLRI containing EVPN Type 2 route:
+     *   MAC aa:bb:cc:dd:ee:ff, IP 192.168.1.1, RD 10.0.0.1:100 (type 1)
+     *   ESI 00:11:22:33:44:55:66:77:88:99, Eth Tag 0, Label 100
+     *
+     * EVPN NLRI entry:
+     *   Route Type (1) + Length (1) + RD(8) + ESI(10) + EthTag(4) +
+     *   MACLen(1) + MAC(6) + IPLen(1) + IP(4) + Label(3) = 40 bytes total
+     *   (route-specific data = 38 bytes)
+     *
+     * MP_REACH_NLRI body:
+     *   AFI(2) + SAFI(1) + NH_Len(1) + NH(4) + Reserved(1) + NLRI(40) = 49 bytes
+     *
+     * Path attr: flags(1) + type(1) + length(2) + body(49) = 53 bytes
+     * Total: 19 (header) + 2 (withdrawn_len) + 2 (pa_len) + 53 (pa) = 76 bytes
+     */
+
+    unsigned char msg[76];
+    int offset = make_bgp_header(msg, 76, UPDATE);
+
+    /* Withdrawn routes length = 0 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+
+    /* Path attributes length = 53 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x35;  /* 53 */
+
+    /* MP_REACH_NLRI attribute (type 14, extended length) */
+    msg[offset++] = 0x90;  /* Flags: Optional, Transitive, Extended Length */
+    msg[offset++] = 0x0E;  /* Type: 14 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x31;  /* Length: 49 */
+
+    /* AFI = 25 (L2VPN) */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x19;
+
+    /* SAFI = 70 (EVPN) */
+    msg[offset++] = 0x46;
+
+    /* Next Hop Length = 4 */
+    msg[offset++] = 0x04;
+
+    /* Next Hop: 10.0.0.1 */
+    msg[offset++] = 0x0A;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x01;
+
+    /* Reserved */
+    msg[offset++] = 0x00;
+
+    /* EVPN NLRI: Type 2 (MAC/IP Advertisement) */
+    msg[offset++] = 0x02;  /* Route Type = 2 */
+    msg[offset++] = 38;    /* Length = 38 bytes of route data */
+
+    /* RD: Type 1 (IP:number), IP=10.0.0.1, number=100 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x01;  /* RD Type 1 */
+    msg[offset++] = 0x0A;  /* 10. */
+    msg[offset++] = 0x00;  /* 0.  */
+    msg[offset++] = 0x00;  /* 0.  */
+    msg[offset++] = 0x01;  /* 1   */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x64;  /* 100 */
+
+    /* ESI: 00:11:22:33:44:55:66:77:88:99 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x11;
+    msg[offset++] = 0x22;
+    msg[offset++] = 0x33;
+    msg[offset++] = 0x44;
+    msg[offset++] = 0x55;
+    msg[offset++] = 0x66;
+    msg[offset++] = 0x77;
+    msg[offset++] = 0x88;
+    msg[offset++] = 0x99;
+
+    /* Ethernet Tag = 0 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+
+    /* MAC Length = 48 bits */
+    msg[offset++] = 0x30;
+
+    /* MAC: aa:bb:cc:dd:ee:ff */
+    msg[offset++] = 0xAA;
+    msg[offset++] = 0xBB;
+    msg[offset++] = 0xCC;
+    msg[offset++] = 0xDD;
+    msg[offset++] = 0xEE;
+    msg[offset++] = 0xFF;
+
+    /* IP Length = 32 bits */
+    msg[offset++] = 0x20;
+
+    /* IP: 192.168.1.1 */
+    msg[offset++] = 0xC0;
+    msg[offset++] = 0xA8;
+    msg[offset++] = 0x01;
+    msg[offset++] = 0x01;
+
+    /* MPLS Label: 100 (encoded in 3 bytes: label<<4 | bottom-of-stack) */
+    /* Label 100 = 0x64, encoded: 0x00 0x06 0x41 (100<<4 | 1) */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x06;
+    msg[offset++] = 0x41;
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for EVPN Type 2", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed) {
+            test_cond("UPDATE type is correct", parsed->type == UPDATE);
+            test_cond("MP_REACH_NLRI attribute exists",
+                parsed->update->path_attrs[MP_REACH_NLRI] != NULL);
+
+            if (parsed->update->path_attrs[MP_REACH_NLRI]) {
+                struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+                test_cond("mp_reach pointer is not NULL", mp != NULL);
+
+                if (mp) {
+                    test_cond("AFI is 25 (L2VPN)", mp->afi == BGP_AFI_L2VPN);
+                    test_cond("SAFI is 70 (EVPN)", mp->safi == BGP_SAFI_EVPN);
+                    test_cond("Next hop is 10.0.0.1",
+                        strcmp(mp->nh_string, "10.0.0.1") == 0);
+                    test_cond("NLRI list is not empty", !list_empty(&mp->nlri));
+
+                    if (!list_empty(&mp->nlri)) {
+                        struct evpn_nlri *nlri = list_entry(mp->nlri.next, struct evpn_nlri, list);
+                        test_cond("Route type is 2", nlri->route_type == EVPN_MAC_IP_ADV);
+                        test_cond("RD type is 1", nlri->rd_type == 1);
+                        test_cond("RD value IP is 10.0.0.1",
+                            nlri->rd_value[0] == 0x0A &&
+                            nlri->rd_value[1] == 0x00 &&
+                            nlri->rd_value[2] == 0x00 &&
+                            nlri->rd_value[3] == 0x01);
+                        test_cond("RD value number is 100",
+                            nlri->rd_value[4] == 0x00 &&
+                            nlri->rd_value[5] == 0x64);
+                        test_cond("ESI byte 0 is 0x00", nlri->esi[0] == 0x00);
+                        test_cond("ESI byte 1 is 0x11", nlri->esi[1] == 0x11);
+                        test_cond("ESI byte 9 is 0x99", nlri->esi[9] == 0x99);
+                        test_cond("Ethernet tag is 0", nlri->ethernet_tag == 0);
+                        test_cond("MAC length is 48", nlri->mac_length == 48);
+                        test_cond("MAC is aa:bb:cc:dd:ee:ff",
+                            nlri->mac[0] == 0xAA &&
+                            nlri->mac[1] == 0xBB &&
+                            nlri->mac[2] == 0xCC &&
+                            nlri->mac[3] == 0xDD &&
+                            nlri->mac[4] == 0xEE &&
+                            nlri->mac[5] == 0xFF);
+                        test_cond("IP length is 32", nlri->ip_length == 32);
+                        test_cond("IP is 192.168.1.1",
+                            nlri->ip[0] == 0xC0 &&
+                            nlri->ip[1] == 0xA8 &&
+                            nlri->ip[2] == 0x01 &&
+                            nlri->ip[3] == 0x01);
+                        test_cond("MPLS label is 100", nlri->mpls_label1 == 100);
+                    }
+                }
+            }
+
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_evpn_type3_inclusive_mcast(void) {
+    test_section("EVPN Type 3 - Inclusive Multicast Ethernet Tag");
+
+    /*
+     * EVPN Type 3: RD(8) + EthTag(4) + IPLen(1) + IP(4) = 17 bytes
+     * NLRI entry: Route Type(1) + Length(1) + 17 = 19 bytes
+     *
+     * MP_REACH_NLRI: AFI(2) + SAFI(1) + NHLen(1) + NH(4) + Reserved(1) + NLRI(19) = 28
+     * Path attr: flags(1) + type(1) + length(2) + body(28) = 32
+     * Total: 19 + 2 + 2 + 32 = 55 bytes
+     */
+
+    unsigned char msg[55];
+    int offset = make_bgp_header(msg, 55, UPDATE);
+
+    msg[offset++] = 0x00; msg[offset++] = 0x00;  /* withdrawn = 0 */
+    msg[offset++] = 0x00; msg[offset++] = 0x20;  /* pa_len = 32 */
+
+    /* MP_REACH_NLRI */
+    msg[offset++] = 0x90; msg[offset++] = 0x0E;  /* flags + type */
+    msg[offset++] = 0x00; msg[offset++] = 0x1C;  /* length = 28 */
+
+    msg[offset++] = 0x00; msg[offset++] = 0x19;  /* AFI 25 */
+    msg[offset++] = 0x46;                         /* SAFI 70 */
+    msg[offset++] = 0x04;                         /* NH len 4 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x02;  /* NH 10.0.0.2 */
+    msg[offset++] = 0x00;                         /* Reserved */
+
+    /* EVPN NLRI: Type 3 */
+    msg[offset++] = 0x03;  /* Route type 3 */
+    msg[offset++] = 17;    /* Length 17 */
+
+    /* RD: Type 0, admin=65000, number=200 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;  /* RD type 0 */
+    msg[offset++] = 0xFD; msg[offset++] = 0xE8;  /* admin: 65000 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0xC8;  /* number: 200 */
+
+    /* Ethernet Tag = 100 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x64;
+
+    /* IP Length = 32 bits */
+    msg[offset++] = 0x20;
+
+    /* IP: 10.0.0.2 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x02;
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for EVPN Type 3", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed && parsed->update->path_attrs[MP_REACH_NLRI]) {
+            struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+
+            if (mp && !list_empty(&mp->nlri)) {
+                struct evpn_nlri *nlri = list_entry(mp->nlri.next, struct evpn_nlri, list);
+                test_cond("Route type is 3", nlri->route_type == EVPN_INCLUSIVE_MCAST);
+                test_cond("RD type is 0", nlri->rd_type == 0);
+                test_cond("Ethernet tag is 100", nlri->ethernet_tag == 100);
+                test_cond("IP length is 32", nlri->ip_length == 32);
+                test_cond("IP is 10.0.0.2",
+                    nlri->ip[0] == 0x0A && nlri->ip[1] == 0x00 &&
+                    nlri->ip[2] == 0x00 && nlri->ip[3] == 0x02);
+            }
+
+            free_msg(parsed);
+        } else if (parsed) {
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_evpn_type1_eth_auto_discovery(void) {
+    test_section("EVPN Type 1 - Ethernet Auto-Discovery");
+
+    /*
+     * EVPN Type 1: RD(8) + ESI(10) + EthTag(4) + Label(3) = 25 bytes
+     * NLRI entry: 1 + 1 + 25 = 27 bytes
+     *
+     * MP_REACH_NLRI: AFI(2) + SAFI(1) + NHLen(1) + NH(4) + Reserved(1) + NLRI(27) = 36
+     * Path attr: 4 + 36 = 40
+     * Total: 19 + 2 + 2 + 40 = 63 bytes
+     */
+
+    unsigned char msg[63];
+    int offset = make_bgp_header(msg, 63, UPDATE);
+
+    msg[offset++] = 0x00; msg[offset++] = 0x00;  /* withdrawn = 0 */
+    msg[offset++] = 0x00; msg[offset++] = 0x28;  /* pa_len = 40 */
+
+    msg[offset++] = 0x90; msg[offset++] = 0x0E;  /* flags + type */
+    msg[offset++] = 0x00; msg[offset++] = 0x24;  /* length = 36 */
+
+    msg[offset++] = 0x00; msg[offset++] = 0x19;  /* AFI 25 */
+    msg[offset++] = 0x46;                         /* SAFI 70 */
+    msg[offset++] = 0x04;                         /* NH len 4 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;  /* NH 10.0.0.1 */
+    msg[offset++] = 0x00;                         /* Reserved */
+
+    /* EVPN Type 1 */
+    msg[offset++] = 0x01;  /* Route type 1 */
+    msg[offset++] = 25;    /* Length */
+
+    /* RD: Type 2 (4-byte ASN:number), ASN=4200000001, number=50 */
+    msg[offset++] = 0x00; msg[offset++] = 0x02;  /* RD type 2 */
+    msg[offset++] = 0xFA; msg[offset++] = 0x56;
+    msg[offset++] = 0xEA; msg[offset++] = 0x01;  /* ASN: 4200000001 = 0xFA56EA01 */
+    msg[offset++] = 0x00; msg[offset++] = 0x32;  /* number: 50 */
+
+    /* ESI: all zeros */
+    memset(msg + offset, 0, 10);
+    offset += 10;
+
+    /* Ethernet Tag = 4294967295 (max) */
+    msg[offset++] = 0xFF; msg[offset++] = 0xFF;
+    msg[offset++] = 0xFF; msg[offset++] = 0xFF;
+
+    /* MPLS Label 500: bytes[0]=500>>12=0, bytes[1]=(500>>4)&0xFF=0x1F, bytes[2]=(500&0xF)<<4|1=0x41 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x1F;
+    msg[offset++] = 0x41;
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for EVPN Type 1", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed && parsed->update->path_attrs[MP_REACH_NLRI]) {
+            struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+
+            if (mp && !list_empty(&mp->nlri)) {
+                struct evpn_nlri *nlri = list_entry(mp->nlri.next, struct evpn_nlri, list);
+                test_cond("Route type is 1", nlri->route_type == EVPN_ETH_AUTO_DISCOVERY);
+                test_cond("RD type is 2", nlri->rd_type == 2);
+                test_cond("Ethernet tag is 4294967295", nlri->ethernet_tag == 0xFFFFFFFF);
+                test_cond("ESI is all zeros",
+                    nlri->esi[0] == 0 && nlri->esi[9] == 0);
+                test_cond("MPLS label is 500", nlri->mpls_label1 == 500);
+            }
+
+            free_msg(parsed);
+        } else if (parsed) {
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_evpn_type5_ip_prefix(void) {
+    test_section("EVPN Type 5 - IP Prefix");
+
+    /*
+     * EVPN Type 5 (IPv4): RD(8) + ESI(10) + EthTag(4) + PrefixLen(1) + IP(4) + GW(4) + Label(3) = 34
+     * NLRI entry: 1 + 1 + 34 = 36 bytes
+     *
+     * MP_REACH_NLRI: AFI(2) + SAFI(1) + NHLen(1) + NH(4) + Reserved(1) + NLRI(36) = 45
+     * Path attr: 4 + 45 = 49
+     * Total: 19 + 2 + 2 + 49 = 72 bytes
+     */
+
+    unsigned char msg[72];
+    int offset = make_bgp_header(msg, 72, UPDATE);
+
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x31;  /* pa_len = 49 */
+
+    msg[offset++] = 0x90; msg[offset++] = 0x0E;
+    msg[offset++] = 0x00; msg[offset++] = 0x2D;  /* length = 45 */
+
+    msg[offset++] = 0x00; msg[offset++] = 0x19;  /* AFI 25 */
+    msg[offset++] = 0x46;                         /* SAFI 70 */
+    msg[offset++] = 0x04;                         /* NH len 4 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;
+    msg[offset++] = 0x00;                         /* Reserved */
+
+    /* EVPN Type 5 */
+    msg[offset++] = 0x05;
+    msg[offset++] = 34;   /* Length */
+
+    /* RD: Type 1, IP=172.16.0.1, number=1000 */
+    msg[offset++] = 0x00; msg[offset++] = 0x01;
+    msg[offset++] = 0xAC; msg[offset++] = 0x10;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;  /* 172.16.0.1 */
+    msg[offset++] = 0x03; msg[offset++] = 0xE8;  /* 1000 */
+
+    /* ESI: all zeros */
+    memset(msg + offset, 0, 10);
+    offset += 10;
+
+    /* Ethernet Tag = 0 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+
+    /* IP Prefix Length = 24 */
+    msg[offset++] = 0x18;
+
+    /* IP Prefix: 192.168.10.0 */
+    msg[offset++] = 0xC0; msg[offset++] = 0xA8;
+    msg[offset++] = 0x0A; msg[offset++] = 0x00;
+
+    /* Gateway IP: 0.0.0.0 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+
+    /* MPLS Label 1000: bytes[0]=1000>>12=0, bytes[1]=(1000>>4)&0xFF=0x3E, bytes[2]=(1000&0xF)<<4|1=0x81 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x3E;
+    msg[offset++] = 0x81;
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for EVPN Type 5", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed && parsed->update->path_attrs[MP_REACH_NLRI]) {
+            struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+
+            if (mp && !list_empty(&mp->nlri)) {
+                struct evpn_nlri *nlri = list_entry(mp->nlri.next, struct evpn_nlri, list);
+                test_cond("Route type is 5", nlri->route_type == EVPN_IP_PREFIX);
+                test_cond("RD type is 1", nlri->rd_type == 1);
+                test_cond("Prefix length is 24", nlri->prefix_length == 24);
+                test_cond("IP prefix is 192.168.10.0",
+                    nlri->ip[0] == 0xC0 && nlri->ip[1] == 0xA8 &&
+                    nlri->ip[2] == 0x0A && nlri->ip[3] == 0x00);
+                test_cond("Gateway IP is 0.0.0.0",
+                    nlri->gw_ip[0] == 0 && nlri->gw_ip[1] == 0 &&
+                    nlri->gw_ip[2] == 0 && nlri->gw_ip[3] == 0);
+                test_cond("IP length is 32", nlri->ip_length == 32);
+                test_cond("MPLS label is 1000", nlri->mpls_label1 == 1000);
+                test_cond("Ethernet tag is 0", nlri->ethernet_tag == 0);
+            }
+
+            free_msg(parsed);
+        } else if (parsed) {
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_evpn_unreach(void) {
+    test_section("EVPN MP_UNREACH_NLRI (withdrawn)");
+
+    /*
+     * EVPN Type 2 in MP_UNREACH_NLRI (no MPLS labels in unreach)
+     * Type 2 without labels: RD(8) + ESI(10) + EthTag(4) + MACLen(1) + MAC(6) + IPLen(1) = 30
+     * NLRI entry: 1 + 1 + 30 = 32 bytes
+     *
+     * MP_UNREACH_NLRI: AFI(2) + SAFI(1) + NLRI(32) = 35
+     * Path attr: 4 + 35 = 39
+     * Total: 19 + 2 + 2 + 39 = 62
+     */
+
+    unsigned char msg[62];
+    int offset = make_bgp_header(msg, 62, UPDATE);
+
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x27;  /* pa_len = 39 */
+
+    /* MP_UNREACH_NLRI (type 15) */
+    msg[offset++] = 0x90; msg[offset++] = 0x0F;
+    msg[offset++] = 0x00; msg[offset++] = 0x23;  /* length = 35 */
+
+    msg[offset++] = 0x00; msg[offset++] = 0x19;  /* AFI 25 */
+    msg[offset++] = 0x46;                         /* SAFI 70 */
+
+    /* EVPN Type 2 (no labels) */
+    msg[offset++] = 0x02;
+    msg[offset++] = 30;   /* Length */
+
+    /* RD: Type 1, 10.0.0.1:100 */
+    msg[offset++] = 0x00; msg[offset++] = 0x01;
+    msg[offset++] = 0x0A; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;
+    msg[offset++] = 0x00; msg[offset++] = 0x64;
+
+    /* ESI: zeros */
+    memset(msg + offset, 0, 10);
+    offset += 10;
+
+    /* Ethernet Tag = 0 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+
+    /* MAC Length = 48 */
+    msg[offset++] = 0x30;
+
+    /* MAC: 11:22:33:44:55:66 */
+    msg[offset++] = 0x11; msg[offset++] = 0x22;
+    msg[offset++] = 0x33; msg[offset++] = 0x44;
+    msg[offset++] = 0x55; msg[offset++] = 0x66;
+
+    /* IP Length = 0 (no IP) */
+    msg[offset++] = 0x00;
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for EVPN unreach", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed && parsed->update->path_attrs[MP_UNREACH_NLRI]) {
+            struct mp_unreach_nlri *mp = parsed->update->path_attrs[MP_UNREACH_NLRI]->mp_unreach;
+            test_cond("mp_unreach pointer is not NULL", mp != NULL);
+
+            if (mp) {
+                test_cond("AFI is 25 (L2VPN)", mp->afi == BGP_AFI_L2VPN);
+                test_cond("SAFI is 70 (EVPN)", mp->safi == BGP_SAFI_EVPN);
+                test_cond("Withdrawn list is not empty", !list_empty(&mp->withdrawn));
+
+                if (!list_empty(&mp->withdrawn)) {
+                    struct evpn_nlri *nlri = list_entry(mp->withdrawn.next, struct evpn_nlri, list);
+                    test_cond("Route type is 2", nlri->route_type == EVPN_MAC_IP_ADV);
+                    test_cond("MAC is 11:22:33:44:55:66",
+                        nlri->mac[0] == 0x11 && nlri->mac[1] == 0x22 &&
+                        nlri->mac[2] == 0x33 && nlri->mac[3] == 0x44 &&
+                        nlri->mac[4] == 0x55 && nlri->mac[5] == 0x66);
+                    test_cond("IP length is 0 (no IP)", nlri->ip_length == 0);
+                    test_cond("MPLS label1 is 0 (no label in unreach)",
+                        nlri->mpls_label1 == 0);
+                }
+            }
+
+            free_msg(parsed);
+        } else if (parsed) {
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_evpn_multiple_nlri(void) {
+    test_section("EVPN multiple NLRI entries");
+
+    /*
+     * Two EVPN Type 3 routes in one MP_REACH_NLRI
+     * Each Type 3: 1 + 1 + 17 = 19 bytes, total NLRI = 38 bytes
+     *
+     * MP_REACH_NLRI: AFI(2) + SAFI(1) + NHLen(1) + NH(4) + Reserved(1) + NLRI(38) = 47
+     * Path attr: 4 + 47 = 51
+     * Total: 19 + 2 + 2 + 51 = 74
+     */
+
+    unsigned char msg[74];
+    int offset = make_bgp_header(msg, 74, UPDATE);
+
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x33;  /* pa_len = 51 */
+
+    msg[offset++] = 0x90; msg[offset++] = 0x0E;
+    msg[offset++] = 0x00; msg[offset++] = 0x2F;  /* length = 47 */
+
+    msg[offset++] = 0x00; msg[offset++] = 0x19;  /* AFI 25 */
+    msg[offset++] = 0x46;                         /* SAFI 70 */
+    msg[offset++] = 0x04;                         /* NH len 4 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;
+    msg[offset++] = 0x00;                         /* Reserved */
+
+    /* First Type 3 route */
+    msg[offset++] = 0x03;
+    msg[offset++] = 17;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;  /* RD type 1 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x0A;  /* Eth tag = 10 */
+    msg[offset++] = 0x20;                         /* IP len = 32 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x01;
+    msg[offset++] = 0x01; msg[offset++] = 0x01;  /* 10.1.1.1 */
+
+    /* Second Type 3 route */
+    msg[offset++] = 0x03;
+    msg[offset++] = 17;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;  /* RD type 1 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x02;
+    msg[offset++] = 0x00; msg[offset++] = 0x02;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x14;  /* Eth tag = 20 */
+    msg[offset++] = 0x20;                         /* IP len = 32 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x02;
+    msg[offset++] = 0x02; msg[offset++] = 0x02;  /* 10.2.2.2 */
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for multiple EVPN NLRI", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed && parsed->update->path_attrs[MP_REACH_NLRI]) {
+            struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+
+            if (mp) {
+                /* Count NLRI entries */
+                int count = 0;
+                struct list_head *pos;
+                list_for_each(pos, &mp->nlri) { count++; }
+                test_cond("Two NLRI entries parsed", count == 2);
+
+                if (count == 2) {
+                    struct evpn_nlri *first = list_entry(mp->nlri.next, struct evpn_nlri, list);
+                    struct evpn_nlri *second = list_entry(first->list.next, struct evpn_nlri, list);
+
+                    test_cond("First route ethernet_tag is 10", first->ethernet_tag == 10);
+                    test_cond("First route IP is 10.1.1.1",
+                        first->ip[0] == 0x0A && first->ip[3] == 0x01);
+                    test_cond("Second route ethernet_tag is 20", second->ethernet_tag == 20);
+                    test_cond("Second route IP is 10.2.2.2",
+                        second->ip[0] == 0x0A && second->ip[3] == 0x02);
+                }
+            }
+
+            free_msg(parsed);
+        } else if (parsed) {
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_evpn_type2_mac_only(void) {
+    test_section("EVPN Type 2 - MAC only (no IP)");
+
+    /*
+     * Type 2 with MAC only (ip_length=0): RD(8) + ESI(10) + EthTag(4) + MACLen(1) + MAC(6) + IPLen(1) + Label(3) = 33
+     * NLRI entry: 1 + 1 + 33 = 35 bytes
+     *
+     * MP_REACH_NLRI: AFI(2) + SAFI(1) + NHLen(1) + NH(4) + Reserved(1) + NLRI(35) = 44
+     * Path attr: 4 + 44 = 48
+     * Total: 19 + 2 + 2 + 48 = 71
+     */
+
+    unsigned char msg[71];
+    int offset = make_bgp_header(msg, 71, UPDATE);
+
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x30;  /* pa_len = 48 */
+
+    msg[offset++] = 0x90; msg[offset++] = 0x0E;
+    msg[offset++] = 0x00; msg[offset++] = 0x2C;  /* length = 44 */
+
+    msg[offset++] = 0x00; msg[offset++] = 0x19;  /* AFI 25 */
+    msg[offset++] = 0x46;                         /* SAFI 70 */
+    msg[offset++] = 0x04;                         /* NH len 4 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;
+    msg[offset++] = 0x00;                         /* Reserved */
+
+    /* EVPN Type 2 */
+    msg[offset++] = 0x02;
+    msg[offset++] = 33;   /* Length (no IP, with label) */
+
+    /* RD: Type 0, admin=65001, number=1 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0xFD; msg[offset++] = 0xE9;  /* 65001 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;  /* 1 */
+
+    /* ESI: zeros */
+    memset(msg + offset, 0, 10);
+    offset += 10;
+
+    /* Ethernet Tag = 0 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+
+    /* MAC Length = 48 */
+    msg[offset++] = 0x30;
+
+    /* MAC: de:ad:be:ef:ca:fe */
+    msg[offset++] = 0xDE; msg[offset++] = 0xAD;
+    msg[offset++] = 0xBE; msg[offset++] = 0xEF;
+    msg[offset++] = 0xCA; msg[offset++] = 0xFE;
+
+    /* IP Length = 0 (no IP) */
+    msg[offset++] = 0x00;
+
+    /* MPLS Label 200: bytes[0]=200>>12=0, bytes[1]=(200>>4)&0xFF=0x0C, bytes[2]=(200&0xF)<<4|1=0x81 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x0C;
+    msg[offset++] = 0x81;
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for EVPN Type 2 MAC-only", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed && parsed->update->path_attrs[MP_REACH_NLRI]) {
+            struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+
+            if (mp && !list_empty(&mp->nlri)) {
+                struct evpn_nlri *nlri = list_entry(mp->nlri.next, struct evpn_nlri, list);
+                test_cond("Route type is 2", nlri->route_type == EVPN_MAC_IP_ADV);
+                test_cond("MAC is de:ad:be:ef:ca:fe",
+                    nlri->mac[0] == 0xDE && nlri->mac[1] == 0xAD &&
+                    nlri->mac[2] == 0xBE && nlri->mac[3] == 0xEF &&
+                    nlri->mac[4] == 0xCA && nlri->mac[5] == 0xFE);
+                test_cond("IP length is 0", nlri->ip_length == 0);
+                test_cond("MPLS label is 200", nlri->mpls_label1 == 200);
+            }
+
+            free_msg(parsed);
+        } else if (parsed) {
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_evpn_truncated(void) {
+    test_section("EVPN truncated NLRI (error handling)");
+
+    /*
+     * EVPN NLRI with route_length claiming more data than available.
+     * Should fail gracefully (return NULL from parse_evpn_nlri).
+     *
+     * MP_REACH_NLRI: AFI(2) + SAFI(1) + NHLen(1) + NH(4) + Reserved(1) + NLRI(4) = 13
+     * NLRI: type(1) + length(1) + only 2 bytes of data (claims 38)
+     *
+     * Path attr: 4 + 13 = 17
+     * Total: 19 + 2 + 2 + 17 = 40
+     */
+
+    unsigned char msg[40];
+    int offset = make_bgp_header(msg, 40, UPDATE);
+
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x11;  /* pa_len = 17 */
+
+    msg[offset++] = 0x90; msg[offset++] = 0x0E;
+    msg[offset++] = 0x00; msg[offset++] = 0x0D;  /* length = 13 */
+
+    msg[offset++] = 0x00; msg[offset++] = 0x19;  /* AFI 25 */
+    msg[offset++] = 0x46;                         /* SAFI 70 */
+    msg[offset++] = 0x04;                         /* NH len 4 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x01;
+    msg[offset++] = 0x00;                         /* Reserved */
+
+    /* Truncated EVPN NLRI: claims length 38 but only 2 bytes follow */
+    msg[offset++] = 0x02;  /* Route type 2 */
+    msg[offset++] = 38;    /* Length claims 38 bytes */
+    msg[offset++] = 0x00;  /* Only 2 bytes of data */
+    msg[offset++] = 0x01;
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for truncated EVPN", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL (UPDATE parsed)", parsed != NULL);
+
+        if (parsed && parsed->update->path_attrs[MP_REACH_NLRI]) {
+            struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+
+            if (mp) {
+                test_cond("NLRI list is empty (truncated entry rejected)",
+                    list_empty(&mp->nlri));
+            }
+
+            free_msg(parsed);
+        } else if (parsed) {
+            free_msg(parsed);
+        }
+    }
+}
+
 int main(void) {
     printf("BGPSee Message Parsing Tests\n");
     printf("============================\n");
@@ -1255,6 +2045,16 @@ int main(void) {
     test_update_mp_reach_ipv6();
     test_update_mp_unreach_ipv6();
     test_update_mp_reach_dual_nexthop();
+
+    // EVPN (RFC 7432) parsing tests
+    test_evpn_type2_mac_ip();
+    test_evpn_type3_inclusive_mcast();
+    test_evpn_type1_eth_auto_discovery();
+    test_evpn_type5_ip_prefix();
+    test_evpn_unreach();
+    test_evpn_multiple_nlri();
+    test_evpn_type2_mac_only();
+    test_evpn_truncated();
 
     test_report();
 }

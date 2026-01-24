@@ -319,11 +319,14 @@ int free_mp_reach(struct bgp_path_attribute *attribute) {
         return 0;
     }
 
-    /* Free NLRI list - entries could be ipv4_nlri or ipv6_nlri depending on AFI */
+    /* Free NLRI list based on AFI */
     list_for_each_safe(i, tmp, &attribute->mp_reach->nlri) {
         list_del(i);
-        /* Both ipv4_nlri and ipv6_nlri have list as first member after length/bytes/prefix */
-        free(list_entry(i, struct ipv6_nlri, list));
+        if (attribute->mp_reach->afi == BGP_AFI_L2VPN) {
+            free(list_entry(i, struct evpn_nlri, list));
+        } else {
+            free(list_entry(i, struct ipv6_nlri, list));
+        }
     }
 
     free(attribute->mp_reach);
@@ -337,10 +340,14 @@ int free_mp_unreach(struct bgp_path_attribute *attribute) {
         return 0;
     }
 
-    /* Free withdrawn routes list */
+    /* Free withdrawn routes list based on AFI */
     list_for_each_safe(i, tmp, &attribute->mp_unreach->withdrawn) {
         list_del(i);
-        free(list_entry(i, struct ipv6_nlri, list));
+        if (attribute->mp_unreach->afi == BGP_AFI_L2VPN) {
+            free(list_entry(i, struct evpn_nlri, list));
+        } else {
+            free(list_entry(i, struct ipv6_nlri, list));
+        }
     }
 
     free(attribute->mp_unreach);
@@ -836,6 +843,192 @@ struct ipv6_nlri *parse_ipv6_nlri(unsigned char **body) {
 }
 
 /*
+ * Decode a 3-byte MPLS label encoding into a 20-bit label value
+ */
+static uint32_t decode_mpls_label(const uint8_t *bytes) {
+    return ((uint32_t)bytes[0] << 12) | ((uint32_t)bytes[1] << 4) | (bytes[2] >> 4);
+}
+
+/*
+ * Parse a single EVPN NLRI entry (RFC 7432, RFC 9136)
+ * Format: Route Type (1) + Length (1) + Route-type-specific data
+ * When is_unreach is true, MPLS labels are not present.
+ */
+static struct evpn_nlri *parse_evpn_nlri(unsigned char **pos, unsigned char *end, int is_unreach) {
+    struct evpn_nlri *nlri;
+    unsigned char *route_end;
+
+    /* Need at least route type + length */
+    if (*pos + 2 > end) {
+        return NULL;
+    }
+
+    nlri = calloc(1, sizeof(*nlri));
+    if (!nlri) {
+        return NULL;
+    }
+
+    INIT_LIST_HEAD(&nlri->list);
+
+    nlri->route_type = uchar_to_uint8_inc(pos);
+    nlri->route_length = uchar_to_uint8_inc(pos);
+
+    /* Validate we have enough data */
+    if (*pos + nlri->route_length > end) {
+        free(nlri);
+        return NULL;
+    }
+
+    route_end = *pos + nlri->route_length;
+
+    /* All types start with RD (8 bytes: 2 type + 6 value) */
+    if (*pos + 8 > route_end) {
+        free(nlri);
+        return NULL;
+    }
+    nlri->rd_type = uchar_be_to_uint16_inc(pos);
+    memcpy(nlri->rd_value, *pos, 6);
+    *pos += 6;
+
+    switch (nlri->route_type) {
+    case EVPN_ETH_AUTO_DISCOVERY:
+        /* ESI (10) + Ethernet Tag (4) + MPLS Label (3) */
+        if (*pos + 14 > route_end) {
+            free(nlri);
+            return NULL;
+        }
+        memcpy(nlri->esi, *pos, 10);
+        *pos += 10;
+        nlri->ethernet_tag = uchar_be_to_uint32_inc(pos);
+        if (!is_unreach && *pos + 3 <= route_end) {
+            nlri->mpls_label1 = decode_mpls_label(*pos);
+            *pos += 3;
+        }
+        break;
+
+    case EVPN_MAC_IP_ADV:
+        /* ESI (10) + Eth Tag (4) + MAC Len (1) + MAC (6) + IP Len (1) + IP (0/4/16) + Label (3) [+ Label2 (3)] */
+        if (*pos + 21 > route_end) {  /* minimum: 10+4+1+6 = 21 before IP len */
+            free(nlri);
+            return NULL;
+        }
+        memcpy(nlri->esi, *pos, 10);
+        *pos += 10;
+        nlri->ethernet_tag = uchar_be_to_uint32_inc(pos);
+        nlri->mac_length = uchar_to_uint8_inc(pos);
+        if (*pos + 6 > route_end) {
+            free(nlri);
+            return NULL;
+        }
+        memcpy(nlri->mac, *pos, 6);
+        *pos += 6;
+        nlri->ip_length = uchar_to_uint8_inc(pos);
+        if (nlri->ip_length == 32) {
+            if (*pos + 4 > route_end) { free(nlri); return NULL; }
+            memcpy(nlri->ip, *pos, 4);
+            *pos += 4;
+        } else if (nlri->ip_length == 128) {
+            if (*pos + 16 > route_end) { free(nlri); return NULL; }
+            memcpy(nlri->ip, *pos, 16);
+            *pos += 16;
+        }
+        if (!is_unreach && *pos + 3 <= route_end) {
+            nlri->mpls_label1 = decode_mpls_label(*pos);
+            *pos += 3;
+            /* Optional second label (L3 VNI) */
+            if (*pos + 3 <= route_end) {
+                nlri->mpls_label2 = decode_mpls_label(*pos);
+                *pos += 3;
+            }
+        }
+        break;
+
+    case EVPN_INCLUSIVE_MCAST:
+        /* Ethernet Tag (4) + IP Len (1) + IP (4/16) */
+        if (*pos + 5 > route_end) {
+            free(nlri);
+            return NULL;
+        }
+        nlri->ethernet_tag = uchar_be_to_uint32_inc(pos);
+        nlri->ip_length = uchar_to_uint8_inc(pos);
+        if (nlri->ip_length == 32) {
+            if (*pos + 4 > route_end) { free(nlri); return NULL; }
+            memcpy(nlri->ip, *pos, 4);
+            *pos += 4;
+        } else if (nlri->ip_length == 128) {
+            if (*pos + 16 > route_end) { free(nlri); return NULL; }
+            memcpy(nlri->ip, *pos, 16);
+            *pos += 16;
+        }
+        break;
+
+    case EVPN_ETH_SEGMENT:
+        /* ESI (10) + IP Len (1) + IP (4/16) */
+        if (*pos + 11 > route_end) {
+            free(nlri);
+            return NULL;
+        }
+        memcpy(nlri->esi, *pos, 10);
+        *pos += 10;
+        nlri->ip_length = uchar_to_uint8_inc(pos);
+        if (nlri->ip_length == 32) {
+            if (*pos + 4 > route_end) { free(nlri); return NULL; }
+            memcpy(nlri->ip, *pos, 4);
+            *pos += 4;
+        } else if (nlri->ip_length == 128) {
+            if (*pos + 16 > route_end) { free(nlri); return NULL; }
+            memcpy(nlri->ip, *pos, 16);
+            *pos += 16;
+        }
+        break;
+
+    case EVPN_IP_PREFIX:
+        /* ESI (10) + Eth Tag (4) + IP Prefix Len (1) + IP (4/16) + GW IP (4/16) + Label (3) */
+        if (*pos + 15 > route_end) {
+            free(nlri);
+            return NULL;
+        }
+        memcpy(nlri->esi, *pos, 10);
+        *pos += 10;
+        nlri->ethernet_tag = uchar_be_to_uint32_inc(pos);
+        nlri->prefix_length = uchar_to_uint8_inc(pos);
+        /* Determine IP size from remaining data and prefix length */
+        if (nlri->prefix_length <= 32) {
+            nlri->ip_length = 32;
+            if (*pos + 4 > route_end) { free(nlri); return NULL; }
+            memcpy(nlri->ip, *pos, 4);
+            *pos += 4;
+            if (*pos + 4 > route_end) { free(nlri); return NULL; }
+            memcpy(nlri->gw_ip, *pos, 4);
+            *pos += 4;
+        } else {
+            nlri->ip_length = 128;
+            if (*pos + 16 > route_end) { free(nlri); return NULL; }
+            memcpy(nlri->ip, *pos, 16);
+            *pos += 16;
+            if (*pos + 16 > route_end) { free(nlri); return NULL; }
+            memcpy(nlri->gw_ip, *pos, 16);
+            *pos += 16;
+        }
+        if (!is_unreach && *pos + 3 <= route_end) {
+            nlri->mpls_label1 = decode_mpls_label(*pos);
+            *pos += 3;
+        }
+        break;
+
+    default:
+        /* Unknown route type - skip over */
+        *pos = route_end;
+        break;
+    }
+
+    /* Advance to end of route data if we haven't consumed everything */
+    *pos = route_end;
+
+    return nlri;
+}
+
+/*
  * Parse MP_REACH_NLRI attribute (type 14) - RFC 4760
  * Format:
  *   AFI (2) + SAFI (1) + NH_Len (1) + Next_Hop (variable) + Reserved (1) + NLRI (variable)
@@ -892,15 +1085,21 @@ struct mp_reach_nlri *parse_mp_reach_nlri(unsigned char **body, uint16_t attr_le
     /* Skip reserved byte */
     (*pos)++;
 
-    /* Parse NLRI based on AFI */
+    /* Parse NLRI based on AFI/SAFI */
     while (*pos < end) {
-        if (mp->afi == 2) {  /* IPv6 */
+        if (mp->afi == BGP_AFI_L2VPN && mp->safi == BGP_SAFI_EVPN) {
+            struct evpn_nlri *nlri = parse_evpn_nlri(pos, end, 0);
+            if (!nlri) {
+                break;
+            }
+            list_add_tail(&nlri->list, &mp->nlri);
+        } else if (mp->afi == BGP_AFI_IPV6) {
             struct ipv6_nlri *nlri = parse_ipv6_nlri(pos);
             if (!nlri) {
                 break;
             }
             list_add_tail(&nlri->list, &mp->nlri);
-        } else if (mp->afi == 1) {  /* IPv4 */
+        } else if (mp->afi == BGP_AFI_IPV4) {
             struct ipv4_nlri *nlri = parse_ipv4_nlri(pos);
             if (!nlri) {
                 break;
@@ -939,15 +1138,21 @@ struct mp_unreach_nlri *parse_mp_unreach_nlri(unsigned char **body, uint16_t att
     mp->afi = uchar_be_to_uint16_inc(pos);
     mp->safi = uchar_to_uint8_inc(pos);
 
-    /* Parse withdrawn routes based on AFI */
+    /* Parse withdrawn routes based on AFI/SAFI */
     while (*pos < end) {
-        if (mp->afi == 2) {  /* IPv6 */
+        if (mp->afi == BGP_AFI_L2VPN && mp->safi == BGP_SAFI_EVPN) {
+            struct evpn_nlri *nlri = parse_evpn_nlri(pos, end, 1);
+            if (!nlri) {
+                break;
+            }
+            list_add_tail(&nlri->list, &mp->withdrawn);
+        } else if (mp->afi == BGP_AFI_IPV6) {
             struct ipv6_nlri *nlri = parse_ipv6_nlri(pos);
             if (!nlri) {
                 break;
             }
             list_add_tail(&nlri->list, &mp->withdrawn);
-        } else if (mp->afi == 1) {  /* IPv4 */
+        } else if (mp->afi == BGP_AFI_IPV4) {
             struct ipv4_nlri *nlri = parse_ipv4_nlri(pos);
             if (!nlri) {
                 break;

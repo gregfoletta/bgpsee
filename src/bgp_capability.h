@@ -44,6 +44,7 @@ enum bgp_capability_code {
 enum bgp_afi {
     BGP_AFI_IPV4    = 1,
     BGP_AFI_IPV6    = 2,
+    BGP_AFI_L2VPN   = 25,
 };
 
 /*
@@ -54,6 +55,7 @@ enum bgp_safi {
     BGP_SAFI_UNICAST    = 1,
     BGP_SAFI_MULTICAST  = 2,
     BGP_SAFI_MPLS       = 4,
+    BGP_SAFI_EVPN       = 70,
 };
 
 /*
