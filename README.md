@@ -65,84 +65,62 @@ Usage: bgpsee [options...] <peer> [<peer> ...]
 
 # Example
 
-Here's an example of *bgpsee* peering with an external router. You only see BGP messages recieved from the peer, not the messages sent by *bgpsee* iteslef.
+Here's an example of an UPDATE recieved from the global routing table. You can see the AS path, next hop, aggregator, and community path attributes, and the NLRI associated with these.
 
 ```sh
-./bgpsee -f json --asn 65001 fw1.i.foletta.xyz,65011,"External Router"
+./bgpsee -f json --asn 65001 external.test,65011,"external"
 ```
 ```json
 {
-  "recv_time": 1701025221,
-  "peer_name": "External Router",
-  "id": 0,
-  "type": "OPEN",
-  "length": 69,
-  "message": {
-    "version": 4,
-    "asn": 65011,
-    "hold_time": 180,
-    "router_id": "10.50.254.1",
-    "optional_parameter_length": 40
-  }
-}
-{
-  "recv_time": 1701025222,
-  "peer_name": "External Router",
-  "id": 1,
-  "type": "KEEPALIVE",
-  "length": 19,
-  "message": {}
-}
-{
-  "recv_time": 1701025844,
-  "peer_name": "External Router",
-  "id": 2336,
+  "time": 1769291475,
+  "peer_name": "external"
+  "id": 3722,
   "type": "UPDATE",
-  "length": 97,
+  "length": 105,
   "message": {
     "withdrawn_route_length": 0,
     "withdrawn_routes": [],
-    "path_attribute_length": 70,
+    "path_attribute_length": 66,
     "path_attributes": {
       "ORIGIN": "IGP",
       "AS_PATH": {
-        "n_as_segments": 2,
-        "n_total_as": 1,
+        "n_as_segments": 1,
+        "n_total_as": 5,
         "path_segments": [
           {
             "type": "AS_SEQUENCE",
             "n_as": 5,
             "asns": [
-              45270,
-              4764,
-              3356,
-              1299,
-              56595
-            ]
-          },
-          {
-            "type": "AS_SET",
-            "n_as": 1,
-            "asns": [
-              23456
+              65011,
+              15694,
+              174,
+              3491,
+              10361
             ]
           }
         ]
       },
-      "NEXT_HOP": "10.50.254.1",
+      "NEXT_HOP": ""192.0.2.1,
       "AGGREGATOR": {
-        "aggregator_asn": 56595,
-        "aggregator_ip": "192.124.193.146"
-      }
+        "aggregator_asn": 10361,
+        "aggregator_ip": "1.47.249.10"
+      },
+      "COMMUNITY": [
+        "174:21100",
+        "174:22010",
+        "15694:174",
+        "15694:1011"
+      ]
     },
     "nlri": [
-      "5.172.183.0/24"
+      "69.191.207.0/24",
+      "69.191.183.0/24",
+      "69.191.182.0/24",
+      "69.191.84.0/24"
     ]
   }
 }
 ```
-
-We see a connection to an external router, with the peer router sending an OPEN and an immediate KEEPALIVE signalling it accepts the OPEN message we sent. After 5 seconds the peer starts sending UPDATEs from all of the paths it has. This router has a full BGP table, and shown is one of the paths that contains most of the path attributes, including AGGREGATOR and an AS_PATH with AS segments.
 
 # Architecture
 
