@@ -80,6 +80,9 @@ Usage: bgpsee [options...] <peer> [<peer> ...]
 -r, --rid <ip>		Local router ID of bgpsee. If not provided 1.1.1.1 will be used.
 -l, --logging <level>	Logging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug
 -f, --format <fmt>	Format of the output, <fmt> may be 'json' (pretty) or 'jsonl' (single line). Defaults to 'json'
+-R, --reconnect		Enable automatic reconnection with exponential backoff
+-m, --max-retries <n>	Maximum reconnection attempts (0 = infinite, default)
+-t, --hold-time <sec>	BGP hold time in seconds (default: 600)
 -h, --help		Print this help message
 
 <peer> formats: <ip>,<asn> or <ip>,<asn>,<name>
