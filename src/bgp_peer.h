@@ -6,6 +6,7 @@
 
 #include "bgp_timers.h"
 #include "bgp_print.h"
+#include "bgp_capability.h"
 #include "list.h"
 #include "tcp_client.h"
 #include "sds.h"
@@ -64,6 +65,9 @@ struct bgp_peer {
 
     // 4-byte ASN support (RFC 6793)
     int four_octet_asn;  // 1 if both peers support 4-byte ASN
+
+    // ADD-PATH support (RFC 7911)
+    struct bgp_addpath_config addpath;  // Negotiated ADD-PATH per AFI/SAFI
 
     sds peer_ip;
     sds source_ip;
