@@ -35,6 +35,23 @@ BGPSee is a passive observation tool, not a routing daemon. Compared to an RFC-c
 
 In short, BGPSee establishes a session, receives UPDATEs, and outputs them as JSON. It never influences forwarding.
 
+## Protocol Support
+
+**Capabilities negotiated in OPEN:**
+- Route Refresh (RFC 2918)
+- Multiprotocol Extensions (RFC 4760): IPv4/IPv6 Unicast, L2VPN/EVPN, VPNv4
+- 4-Octet AS Number (RFC 6793)
+
+**Path attributes parsed:**
+- ORIGIN, AS_PATH, NEXT_HOP, MED, LOCAL_PREF, ATOMIC_AGGREGATE, AGGREGATOR
+- COMMUNITY (RFC 1997), LARGE_COMMUNITY (RFC 8092)
+- MP_REACH_NLRI / MP_UNREACH_NLRI (RFC 4760)
+
+**Address families:**
+- IPv4/IPv6 Unicast
+- EVPN (RFC 7432): Route types 1-5
+- VPNv4/MPLS-VPN (RFC 4364)
+
 # Version
 
 Current version is **0.0.9**
@@ -192,3 +209,14 @@ Please report bugs and crashes by [opening an issue](https://github.com/gregfole
 Top items to add in future releases:
 - VPNv6 Address Family (AFI: 2, SAFI: 128)
 - ADD-PATH (RFC 7911)
+
+# AI Acknowledgement
+
+Versions 0.0.1 and 0.0.2 were written entirely without AI assistance. The core architecture, multi-threading, output queuing, BGP FSM, CLI parsing, and timer management, was designed and implemented by hand.
+
+From version 0.0.3 onwards, Claude (Anthropic) has been used to accelerate development, primarily for:
+- Writing unit tests for message parsing
+- Implementing multiprotocol extensions (EVPN, VPNv4)
+- Adding path attribute parsers
+
+This project was not generated from scratch by AI. The foundational design decisions and core networking code predate any AI involvement.
