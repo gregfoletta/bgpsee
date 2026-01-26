@@ -56,6 +56,7 @@ enum bgp_safi {
     BGP_SAFI_MULTICAST  = 2,
     BGP_SAFI_MPLS       = 4,
     BGP_SAFI_EVPN       = 70,
+    BGP_SAFI_MPLS_VPN   = 128,  /* MPLS-labeled VPN (RFC 4364) */
 };
 
 /*
@@ -134,3 +135,43 @@ const char *bgp_capability_name(uint8_t code);
  * Returns 1 if present (and sets *asn to the 4-byte ASN), 0 if not present
  */
 int bgp_capabilities_has_four_octet_asn(const struct bgp_capabilities *caps, uint32_t *asn);
+
+/*
+ * ADD-PATH (RFC 7911) Support
+ *
+ * ADD-PATH capability allows multiple paths to be advertised for the same prefix.
+ * When negotiated, each NLRI is prefixed with a 4-byte Path Identifier.
+ */
+
+/* ADD-PATH Send/Receive flags */
+enum bgp_addpath_sr {
+    BGP_ADDPATH_RECEIVE = 1,  /* Peer can receive ADD-PATH */
+    BGP_ADDPATH_SEND    = 2,  /* Peer can send ADD-PATH */
+    BGP_ADDPATH_BOTH    = 3,  /* Peer can send and receive ADD-PATH */
+};
+
+/*
+ * ADD-PATH configuration per AFI/SAFI
+ * Stores what we can receive from the peer (peer's send capability)
+ */
+struct bgp_addpath_config {
+    uint8_t ipv4_unicast;    /* BGP_ADDPATH_* flags for AFI 1, SAFI 1 */
+    uint8_t ipv6_unicast;    /* BGP_ADDPATH_* flags for AFI 2, SAFI 1 */
+    uint8_t vpnv4;           /* BGP_ADDPATH_* flags for AFI 1, SAFI 128 */
+    uint8_t evpn;            /* BGP_ADDPATH_* flags for AFI 25, SAFI 70 */
+};
+
+/*
+ * Extract ADD-PATH configuration from capabilities
+ * Populates config with the send/receive flags for each AFI/SAFI
+ * Returns 1 if ADD-PATH capability found, 0 otherwise
+ */
+int bgp_capabilities_get_addpath(const struct bgp_capabilities *caps,
+                                  struct bgp_addpath_config *config);
+
+/*
+ * Add ADD-PATH capability for an AFI/SAFI
+ * sr_flags is a combination of BGP_ADDPATH_RECEIVE and BGP_ADDPATH_SEND
+ */
+int bgp_capabilities_add_addpath(struct bgp_capabilities *caps,
+                                  uint16_t afi, uint8_t safi, uint8_t sr_flags);

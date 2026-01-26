@@ -830,7 +830,9 @@ int fsm_state_connect(struct bgp_peer *peer) {
     open_asn = (*peer->local_asn > 65535) ? 23456 : (uint16_t)*peer->local_asn;
 
     log_print(LOG_DEBUG, "Sending OPEN to peer %s\n", peer->name);
-    queue_and_send_open(peer, *peer->version, open_asn, 30, *peer->local_rid, caps);
+    /*For the time being, hold time is set to a static 5 minutes. Likely
+     * negotiated down by the peer as their hold time will be lower */
+    queue_and_send_open(peer, *peer->version, open_asn, 600, *peer->local_rid, caps);
 
     start_timer(peer->local_timers, HoldTimer);
     peer->fsm_state = OPENSENT;

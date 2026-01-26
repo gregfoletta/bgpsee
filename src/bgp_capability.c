@@ -263,3 +263,62 @@ int bgp_capabilities_has_four_octet_asn(const struct bgp_capabilities *caps, uin
 
     return 0;
 }
+
+int bgp_capabilities_get_addpath(const struct bgp_capabilities *caps,
+                                  struct bgp_addpath_config *config) {
+    struct list_head *pos;
+    struct bgp_capability *cap;
+    int found = 0;
+
+    if (!caps || !config) {
+        return 0;
+    }
+
+    /* Initialize config to no ADD-PATH support */
+    memset(config, 0, sizeof(*config));
+
+    list_for_each(pos, &caps->caps) {
+        cap = list_entry(pos, struct bgp_capability, list);
+        if (cap->code == BGP_CAP_ADD_PATH && cap->value) {
+            found = 1;
+            /* ADD-PATH format: AFI(2) + SAFI(1) + Send/Receive(1) per entry */
+            /* Total length must be multiple of 4 */
+            int entries = cap->length / 4;
+            for (int i = 0; i < entries; i++) {
+                uint16_t afi = uchar_be_to_uint16(cap->value + i * 4);
+                uint8_t safi = cap->value[i * 4 + 2];
+                uint8_t sr = cap->value[i * 4 + 3];
+
+                /* Map to our config structure */
+                if (afi == BGP_AFI_IPV4 && safi == BGP_SAFI_UNICAST) {
+                    config->ipv4_unicast = sr;
+                } else if (afi == BGP_AFI_IPV6 && safi == BGP_SAFI_UNICAST) {
+                    config->ipv6_unicast = sr;
+                } else if (afi == BGP_AFI_IPV4 && safi == BGP_SAFI_MPLS_VPN) {
+                    config->vpnv4 = sr;
+                } else if (afi == BGP_AFI_L2VPN && safi == BGP_SAFI_EVPN) {
+                    config->evpn = sr;
+                }
+            }
+        }
+    }
+
+    return found;
+}
+
+int bgp_capabilities_add_addpath(struct bgp_capabilities *caps,
+                                  uint16_t afi, uint8_t safi, uint8_t sr_flags) {
+    uint8_t value[4];
+
+    if (!caps) {
+        return -1;
+    }
+
+    /* ADD-PATH format: AFI(2) + SAFI(1) + Send/Receive(1) */
+    value[0] = (uint8_t)(afi >> 8);
+    value[1] = (uint8_t)(afi & 0xFF);
+    value[2] = safi;
+    value[3] = sr_flags;
+
+    return bgp_capabilities_add(caps, BGP_CAP_ADD_PATH, 4, value);
+}

@@ -157,11 +157,12 @@ Run the test suite with:
 make test
 ```
 
-This runs 281 tests covering:
+This runs 318 tests covering:
 - Byte conversion functions (big-endian network byte order)
 - BGP message parsing (OPEN, UPDATE, KEEPALIVE, NOTIFICATION)
-- MP_REACH/MP_UNREACH (IPv6, EVPN)
+- MP_REACH/MP_UNREACH (IPv6, EVPN, VPNv4)
 - EVPN route types 1-5 (MAC/IP, Inclusive Multicast, IP Prefix, etc.)
+- VPNv4/MPLS-VPN (RFC 4364)
 - Capability negotiation encoding/decoding
 - NOTIFICATION message generation
 - Invalid input handling (truncated data, bad lengths)
@@ -184,4 +185,5 @@ Please report bugs and crashes by [opening an issue](https://github.com/gregfole
 # Roadmap
 
 Top items to add in future releases:
-- VPNv4 Address Family (AFI: 1, SAFI: 128)
+- VPNv6 Address Family (AFI: 2, SAFI: 128)
+- ADD-PATH (RFC 7911)

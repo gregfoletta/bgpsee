@@ -2006,6 +2006,445 @@ void test_evpn_truncated(void) {
     }
 }
 
+/*
+ * VPNv4 (RFC 4364) Tests
+ *
+ * VPNv4 uses AFI=1 (IPv4), SAFI=128 (MPLS-labeled VPN)
+ * NLRI format (MP_REACH): Length(1) + Label(3) + RD(8) + Prefix(0-4)
+ *   Total bits = 24 (label) + 64 (RD) + prefix_bits
+ * NLRI format (MP_UNREACH): Length(1) + RD(8) + Prefix(0-4) (no label)
+ *   Total bits = 64 (RD) + prefix_bits
+ */
+
+void test_vpnv4_basic(void) {
+    test_section("VPNv4 - Basic MP_REACH_NLRI");
+
+    /*
+     * UPDATE with MP_REACH_NLRI containing VPNv4 prefix:
+     *   Prefix: 10.0.0.0/24, RD 65000:100 (type 0), Label 1000
+     *
+     * VPNv4 NLRI entry:
+     *   Length (1) + Label (3) + RD (8) + Prefix (3 bytes for /24) = 15 bytes
+     *   total_bits = 24 + 64 + 24 = 112
+     *
+     * MP_REACH_NLRI body:
+     *   AFI(2) + SAFI(1) + NH_Len(1) + NH(12 for RD+IP) + Reserved(1) + NLRI(15) = 32 bytes
+     *
+     * Path attr: flags(1) + type(1) + ext_length(2) + body(32) = 36 bytes
+     * Total: 19 (header) + 2 (withdrawn_len) + 2 (pa_len) + 36 (pa) = 59 bytes
+     */
+
+    unsigned char msg[59];
+    int offset = make_bgp_header(msg, 59, UPDATE);
+
+    /* Withdrawn routes length = 0 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+
+    /* Path attributes length = 36 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x24;  /* 36 */
+
+    /* MP_REACH_NLRI attribute (type 14) */
+    msg[offset++] = 0x90;  /* Flags: Optional, Transitive, Extended Length */
+    msg[offset++] = 0x0E;  /* Type: 14 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x20;  /* Length: 32 */
+
+    /* AFI = 1 (IPv4) */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x01;
+
+    /* SAFI = 128 (MPLS-labeled VPN) */
+    msg[offset++] = 0x80;
+
+    /* Next Hop Length = 12 (RD:8 + IPv4:4) */
+    msg[offset++] = 0x0C;
+
+    /* Next Hop RD (8 bytes, typically 0s) */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+
+    /* Next Hop IP: 10.0.0.1 */
+    msg[offset++] = 0x0A;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x01;
+
+    /* Reserved */
+    msg[offset++] = 0x00;
+
+    /* VPNv4 NLRI */
+    /* Length: 24 (label) + 64 (RD) + 24 (prefix) = 112 bits */
+    msg[offset++] = 112;
+
+    /* MPLS Label 1000 (3-byte encoding: label in top 20 bits, bottom 4 bits = flags)
+     * Label 1000 = 0x3E8
+     * bytes[0] = 1000 >> 12 = 0
+     * bytes[1] = (1000 >> 4) & 0xFF = 62 (0x3E)
+     * bytes[2] = (1000 & 0xF) << 4 = 128 (0x80) + S-bit in bottom nibble = 0x81
+     */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x3E;
+    msg[offset++] = 0x81;
+
+    /* RD: Type 0 (ASN:number), ASN=65000, number=100 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;  /* RD Type 0 */
+    msg[offset++] = 0xFD;  /* 65000 >> 8 = 253 (0xFD) */
+    msg[offset++] = 0xE8;  /* 65000 & 0xFF = 232 (0xE8) */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x64;  /* 100 */
+
+    /* Prefix: 10.0.0.0/24 (3 bytes) */
+    msg[offset++] = 0x0A;  /* 10 */
+    msg[offset++] = 0x00;  /* 0 */
+    msg[offset++] = 0x00;  /* 0 */
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for VPNv4", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed) {
+            test_cond("Message type is UPDATE", parsed->type == UPDATE);
+            test_cond("UPDATE has MP_REACH_NLRI",
+                parsed->update->path_attrs[MP_REACH_NLRI] != NULL);
+
+            if (parsed->update->path_attrs[MP_REACH_NLRI]) {
+                struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+                test_cond("MP_REACH_NLRI is set", mp != NULL);
+
+                if (mp) {
+                    test_cond("AFI is 1 (IPv4)", mp->afi == BGP_AFI_IPV4);
+                    test_cond("SAFI is 128 (MPLS-VPN)", mp->safi == BGP_SAFI_MPLS_VPN);
+                    test_cond("Next hop string set", mp->nh_string[0] != '\0');
+
+                    test_cond("NLRI list is not empty", !list_empty(&mp->nlri));
+
+                    if (!list_empty(&mp->nlri)) {
+                        struct vpnv4_nlri *nlri = list_entry(mp->nlri.next,
+                            struct vpnv4_nlri, list);
+
+                        test_cond("MPLS label is 1000", nlri->mpls_label == 1000);
+                        test_cond("RD type is 0", nlri->rd_type == 0);
+                        test_cond("Prefix length is 24", nlri->prefix_length == 24);
+                        test_cond("Prefix byte 0 is 10", nlri->prefix[0] == 10);
+                        test_cond("Prefix byte 1 is 0", nlri->prefix[1] == 0);
+                        test_cond("Prefix byte 2 is 0", nlri->prefix[2] == 0);
+                    }
+                }
+            }
+
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_vpnv4_multiple(void) {
+    test_section("VPNv4 - Multiple NLRI prefixes");
+
+    /*
+     * UPDATE with MP_REACH_NLRI containing 2 VPNv4 prefixes:
+     *   1. 10.0.0.0/24, RD 65000:100, Label 100
+     *   2. 192.168.1.0/24, RD 65000:200, Label 200
+     *
+     * Each NLRI: 1 (len) + 3 (label) + 8 (RD) + 3 (prefix) = 15 bytes
+     * Two NLRIs = 30 bytes
+     *
+     * MP_REACH_NLRI body:
+     *   AFI(2) + SAFI(1) + NH_Len(1) + NH(12) + Reserved(1) + NLRI(30) = 47 bytes
+     *
+     * Path attr: flags(1) + type(1) + length(2) + body(47) = 51 bytes
+     * Total: 19 + 2 + 2 + 51 = 74 bytes
+     */
+
+    unsigned char msg[74];
+    int offset = make_bgp_header(msg, 74, UPDATE);
+
+    /* Withdrawn routes length = 0 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+
+    /* Path attributes length = 51 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x33;  /* 51 */
+
+    /* MP_REACH_NLRI attribute */
+    msg[offset++] = 0x90;  /* Flags */
+    msg[offset++] = 0x0E;  /* Type: 14 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x2F;  /* Length: 47 */
+
+    /* AFI = 1 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x01;
+
+    /* SAFI = 128 */
+    msg[offset++] = 0x80;
+
+    /* Next Hop Length = 12 */
+    msg[offset++] = 0x0C;
+
+    /* Next Hop RD + IP */
+    msg[offset++] = 0x00; msg[offset++] = 0x00; msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x00; msg[offset++] = 0x00; msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0x0A; msg[offset++] = 0x00; msg[offset++] = 0x00; msg[offset++] = 0x01;
+
+    /* Reserved */
+    msg[offset++] = 0x00;
+
+    /* First VPNv4 NLRI: 10.0.0.0/24, Label 100 */
+    msg[offset++] = 112;  /* 24 + 64 + 24 */
+    /* Label 100: 0x64 -> bytes[0]=0, bytes[1]=6, bytes[2]=0x41 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x06;
+    msg[offset++] = 0x41;
+    /* RD Type 0, ASN 65000, number 100 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0xFD; msg[offset++] = 0xE8;
+    msg[offset++] = 0x00; msg[offset++] = 0x00; msg[offset++] = 0x00; msg[offset++] = 0x64;
+    /* Prefix 10.0.0.0/24 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x00; msg[offset++] = 0x00;
+
+    /* Second VPNv4 NLRI: 192.168.1.0/24, Label 200 */
+    msg[offset++] = 112;  /* 24 + 64 + 24 */
+    /* Label 200: 0xC8 -> bytes[0]=0, bytes[1]=12, bytes[2]=0x81 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x0C;
+    msg[offset++] = 0x81;
+    /* RD Type 0, ASN 65000, number 200 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0xFD; msg[offset++] = 0xE8;
+    msg[offset++] = 0x00; msg[offset++] = 0x00; msg[offset++] = 0x00; msg[offset++] = 0xC8;
+    /* Prefix 192.168.1.0/24 */
+    msg[offset++] = 0xC0; msg[offset++] = 0xA8; msg[offset++] = 0x01;
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for multiple VPNv4", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed && parsed->update->path_attrs[MP_REACH_NLRI]) {
+            struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+
+            if (mp) {
+                /* Count NLRI entries */
+                int count = 0;
+                struct list_head *i;
+                list_for_each(i, &mp->nlri) {
+                    count++;
+                }
+                test_cond("Two NLRI entries parsed", count == 2);
+
+                /* Verify first entry */
+                struct vpnv4_nlri *first = list_entry(mp->nlri.next, struct vpnv4_nlri, list);
+                test_cond("First prefix is /24", first->prefix_length == 24);
+                test_cond("First label is 100", first->mpls_label == 100);
+
+                /* Verify second entry */
+                struct vpnv4_nlri *second = list_entry(first->list.next, struct vpnv4_nlri, list);
+                test_cond("Second prefix is /24", second->prefix_length == 24);
+                test_cond("Second label is 200", second->mpls_label == 200);
+                test_cond("Second prefix byte 0 is 192", second->prefix[0] == 192);
+            }
+
+            free_msg(parsed);
+        } else if (parsed) {
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_vpnv4_unreach(void) {
+    test_section("VPNv4 - MP_UNREACH_NLRI (withdrawal, no label)");
+
+    /*
+     * UPDATE with MP_UNREACH_NLRI withdrawing VPNv4 prefix:
+     *   Prefix: 10.0.0.0/24, RD 65000:100 (no label in unreach)
+     *
+     * VPNv4 UNREACH NLRI entry:
+     *   Length (1) + RD (8) + Prefix (3) = 12 bytes
+     *   total_bits = 64 (RD) + 24 (prefix) = 88
+     *
+     * MP_UNREACH_NLRI body:
+     *   AFI(2) + SAFI(1) + NLRI(12) = 15 bytes
+     *
+     * Path attr: flags(1) + type(1) + length(1) + body(15) = 18 bytes
+     * Total: 19 + 2 + 2 + 18 = 41 bytes
+     */
+
+    unsigned char msg[41];
+    int offset = make_bgp_header(msg, 41, UPDATE);
+
+    /* Withdrawn routes length = 0 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+
+    /* Path attributes length = 18 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x12;  /* 18 */
+
+    /* MP_UNREACH_NLRI attribute (type 15) */
+    msg[offset++] = 0x80;  /* Flags: Optional */
+    msg[offset++] = 0x0F;  /* Type: 15 */
+    msg[offset++] = 0x0F;  /* Length: 15 */
+
+    /* AFI = 1 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x01;
+
+    /* SAFI = 128 */
+    msg[offset++] = 0x80;
+
+    /* VPNv4 NLRI (no label in unreach) */
+    /* Length: 64 (RD) + 24 (prefix) = 88 bits */
+    msg[offset++] = 88;
+
+    /* RD Type 0, ASN 65000, number 100 */
+    msg[offset++] = 0x00; msg[offset++] = 0x00;
+    msg[offset++] = 0xFD; msg[offset++] = 0xE8;
+    msg[offset++] = 0x00; msg[offset++] = 0x00; msg[offset++] = 0x00; msg[offset++] = 0x64;
+
+    /* Prefix 10.0.0.0/24 */
+    msg[offset++] = 0x0A; msg[offset++] = 0x00; msg[offset++] = 0x00;
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for VPNv4 unreach", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL", parsed != NULL);
+
+        if (parsed) {
+            test_cond("UPDATE has MP_UNREACH_NLRI",
+                parsed->update->path_attrs[MP_UNREACH_NLRI] != NULL);
+
+            if (parsed->update->path_attrs[MP_UNREACH_NLRI]) {
+                struct mp_unreach_nlri *mp = parsed->update->path_attrs[MP_UNREACH_NLRI]->mp_unreach;
+
+                test_cond("MP_UNREACH_NLRI is set", mp != NULL);
+
+                if (mp) {
+                    test_cond("AFI is 1", mp->afi == BGP_AFI_IPV4);
+                    test_cond("SAFI is 128", mp->safi == BGP_SAFI_MPLS_VPN);
+                    test_cond("Withdrawn list is not empty", !list_empty(&mp->withdrawn));
+
+                    if (!list_empty(&mp->withdrawn)) {
+                        struct vpnv4_nlri *nlri = list_entry(mp->withdrawn.next,
+                            struct vpnv4_nlri, list);
+
+                        test_cond("No MPLS label in unreach", nlri->mpls_label == 0);
+                        test_cond("RD type is 0", nlri->rd_type == 0);
+                        test_cond("Prefix length is 24", nlri->prefix_length == 24);
+                        test_cond("Prefix byte 0 is 10", nlri->prefix[0] == 10);
+                    }
+                }
+            }
+
+            free_msg(parsed);
+        }
+    }
+}
+
+void test_vpnv4_truncated(void) {
+    test_section("VPNv4 - Truncated NLRI handling");
+
+    /*
+     * UPDATE with truncated VPNv4 NLRI (length says 112 bits but only 3 bytes of data)
+     * Should parse UPDATE but reject the malformed NLRI entry
+     *
+     * MP_REACH body: AFI(2) + SAFI(1) + NH_Len(1) + Reserved(1) + NLRI(4) = 9 bytes
+     *   NLRI = len(1) + 3 bytes of truncated data (needs 14 for 112 bits)
+     * PA: flags(1) + type(1) + length(1) + body(9) = 12 bytes
+     * Total: 19 + 2 + 2 + 12 = 35 bytes
+     */
+
+    unsigned char msg[35];
+    int offset = make_bgp_header(msg, 35, UPDATE);
+
+    /* Withdrawn routes length = 0 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+
+    /* Path attributes length = 12 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x0C;
+
+    /* MP_REACH_NLRI attribute */
+    msg[offset++] = 0x80;  /* Flags */
+    msg[offset++] = 0x0E;  /* Type: 14 */
+    msg[offset++] = 0x09;  /* Length: 9 */
+
+    /* AFI = 1 */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x01;
+
+    /* SAFI = 128 */
+    msg[offset++] = 0x80;
+
+    /* Next Hop Length = 0 */
+    msg[offset++] = 0x00;
+
+    /* Reserved */
+    msg[offset++] = 0x00;
+
+    /* Truncated VPNv4 NLRI: length says 112 but only 3 bytes follow */
+    msg[offset++] = 112;  /* Claims 14 bytes needed (24+64+24 bits = 14 bytes) */
+    msg[offset++] = 0x00; /* Only 3 bytes of data - truncated! */
+    msg[offset++] = 0x00;
+    msg[offset++] = 0x00;
+
+    int fd = create_test_socket(msg, sizeof(msg));
+    test_cond("Created test socket for truncated VPNv4", fd >= 0);
+
+    if (fd >= 0) {
+        struct bgp_peer *peer = create_test_peer(fd, 0);
+        struct bgp_msg *parsed = recv_msg(peer);
+        close(fd);
+        free_test_peer(peer);
+
+        test_cond("recv_msg returns non-NULL (UPDATE parsed)", parsed != NULL);
+
+        if (parsed && parsed->update->path_attrs[MP_REACH_NLRI]) {
+            struct mp_reach_nlri *mp = parsed->update->path_attrs[MP_REACH_NLRI]->mp_reach;
+
+            if (mp) {
+                test_cond("NLRI list is empty (truncated entry rejected)",
+                    list_empty(&mp->nlri));
+            }
+
+            free_msg(parsed);
+        } else if (parsed) {
+            free_msg(parsed);
+        }
+    }
+}
+
 int main(void) {
     printf("BGPSee Message Parsing Tests\n");
     printf("============================\n");
@@ -2055,6 +2494,12 @@ int main(void) {
     test_evpn_multiple_nlri();
     test_evpn_type2_mac_only();
     test_evpn_truncated();
+
+    // VPNv4 (RFC 4364) parsing tests
+    test_vpnv4_basic();
+    test_vpnv4_multiple();
+    test_vpnv4_unreach();
+    test_vpnv4_truncated();
 
     test_report();
 }

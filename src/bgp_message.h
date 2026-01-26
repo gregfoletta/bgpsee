@@ -99,6 +99,7 @@ struct bgp_path_attribute {
 
 
 struct ipv4_nlri {
+    uint32_t path_id;    /* ADD-PATH identifier (0 if not present) */
     uint8_t length;
     uint8_t bytes;
     uint8_t prefix[4];
@@ -107,6 +108,7 @@ struct ipv4_nlri {
 };
 
 struct ipv6_nlri {
+    uint32_t path_id;    /* ADD-PATH identifier (0 if not present) */
     uint8_t length;      /* Prefix length in bits */
     uint8_t bytes;       /* Number of bytes needed for prefix */
     uint8_t prefix[16];  /* IPv6 prefix (up to 128 bits) */
@@ -129,6 +131,7 @@ enum evpn_route_type {
  * EVPN NLRI entry - stores parsed binary data from EVPN route
  */
 struct evpn_nlri {
+    uint32_t path_id;             /* ADD-PATH identifier (0 if not present) */
     uint8_t route_type;
     uint8_t route_length;         /* bytes of route-type-specific data */
 
@@ -159,6 +162,28 @@ struct evpn_nlri {
     /* MPLS Labels */
     uint32_t mpls_label1;
     uint32_t mpls_label2;         /* Type 2 optional L3 VNI */
+
+    struct list_head list;
+};
+
+/*
+ * VPNv4 NLRI entry (RFC 4364) - MPLS-labeled VPN
+ * Wire format: Length (bits) + Label (3) + RD (8) + Prefix (variable)
+ * With ADD-PATH: Path ID (4) + Length (bits) + Label (3) + RD (8) + Prefix (variable)
+ */
+struct vpnv4_nlri {
+    uint32_t path_id;    /* ADD-PATH identifier (0 if not present) */
+
+    /* MPLS Label (decoded from 3-byte encoding) */
+    uint32_t mpls_label;
+
+    /* Route Distinguisher (8 bytes: 2 type + 6 value) */
+    uint16_t rd_type;
+    uint8_t rd_value[6];
+
+    /* IPv4 Prefix */
+    uint8_t prefix_length;        /* bits (0-32) */
+    uint8_t prefix[4];
 
     struct list_head list;
 };

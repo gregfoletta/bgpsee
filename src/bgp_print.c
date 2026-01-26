@@ -185,6 +185,7 @@ static const char *safi_name(uint8_t safi) {
         case BGP_SAFI_MULTICAST: return "Multicast";
         case BGP_SAFI_MPLS:      return "MPLS";
         case BGP_SAFI_EVPN:      return "EVPN";
+        case BGP_SAFI_MPLS_VPN:  return "MPLS-VPN";
         default:                 return "Unknown";
     }
 }
@@ -731,6 +732,29 @@ static json_t *construct_json_evpn_nlri(struct evpn_nlri *nlri) {
     return obj;
 }
 
+static json_t *construct_json_vpnv4_nlri(struct vpnv4_nlri *nlri) {
+    json_t *obj = json_object();
+    char buf[64];
+
+    /* RD */
+    format_rd(buf, sizeof(buf), nlri->rd_type, nlri->rd_value);
+    json_object_set_new(obj, "rd", json_string(buf));
+
+    /* IPv4 prefix */
+    snprintf(buf, sizeof(buf), "%d.%d.%d.%d/%u",
+             nlri->prefix[0], nlri->prefix[1],
+             nlri->prefix[2], nlri->prefix[3],
+             nlri->prefix_length);
+    json_object_set_new(obj, "prefix", json_string(buf));
+
+    /* MPLS label (only present in MP_REACH, not MP_UNREACH) */
+    if (nlri->mpls_label) {
+        json_object_set_new(obj, "mpls_label", json_integer(nlri->mpls_label));
+    }
+
+    return obj;
+}
+
 json_t *construct_json_mp_reach(struct bgp_path_attribute *attr) {
     json_t *mp = json_object();
     struct list_head *i;
@@ -761,6 +785,12 @@ json_t *construct_json_mp_reach(struct bgp_path_attribute *attr) {
         list_for_each(i, &attr->mp_reach->nlri) {
             struct evpn_nlri *nlri = list_entry(i, struct evpn_nlri, list);
             json_array_append_new(nlri_array, construct_json_evpn_nlri(nlri));
+        }
+    } else if (attr->mp_reach->afi == BGP_AFI_IPV4 &&
+               attr->mp_reach->safi == BGP_SAFI_MPLS_VPN) {
+        list_for_each(i, &attr->mp_reach->nlri) {
+            struct vpnv4_nlri *nlri = list_entry(i, struct vpnv4_nlri, list);
+            json_array_append_new(nlri_array, construct_json_vpnv4_nlri(nlri));
         }
     } else if (attr->mp_reach->afi == BGP_AFI_IPV6) {
         list_for_each(i, &attr->mp_reach->nlri) {
@@ -797,6 +827,12 @@ json_t *construct_json_mp_unreach(struct bgp_path_attribute *attr) {
         list_for_each(i, &attr->mp_unreach->withdrawn) {
             struct evpn_nlri *nlri = list_entry(i, struct evpn_nlri, list);
             json_array_append_new(withdrawn_array, construct_json_evpn_nlri(nlri));
+        }
+    } else if (attr->mp_unreach->afi == BGP_AFI_IPV4 &&
+               attr->mp_unreach->safi == BGP_SAFI_MPLS_VPN) {
+        list_for_each(i, &attr->mp_unreach->withdrawn) {
+            struct vpnv4_nlri *nlri = list_entry(i, struct vpnv4_nlri, list);
+            json_array_append_new(withdrawn_array, construct_json_vpnv4_nlri(nlri));
         }
     } else if (attr->mp_unreach->afi == BGP_AFI_IPV6) {
         list_for_each(i, &attr->mp_unreach->withdrawn) {
