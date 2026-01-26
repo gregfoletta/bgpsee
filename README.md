@@ -125,7 +125,7 @@ Here's an example of an UPDATE recieved from the global routing table. You can s
           }
         ]
       },
-      "NEXT_HOP": ""192.0.2.1,
+      "NEXT_HOP": "192.0.2.1",
       "AGGREGATOR": {
         "aggregator_asn": 10361,
         "aggregator_ip": "1.47.249.10"
