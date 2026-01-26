@@ -368,6 +368,18 @@ int set_bgp_reconnect(struct bgp_instance *i, unsigned int id, int enabled, int 
     return 0;
 }
 
+int set_bgp_hold_time(struct bgp_instance *i, unsigned int id, uint16_t hold_time) {
+    struct bgp_peer *peer;
+
+    if (!(peer = get_peer_from_instance(i, id))) {
+        return -1;
+    }
+
+    peer->peer_timers.conf_hold_time = hold_time;
+
+    return 0;
+}
+
 
 void free_bgp_peer(struct bgp_instance *i, unsigned int id) {
     struct bgp_peer *peer;
@@ -830,9 +842,8 @@ int fsm_state_connect(struct bgp_peer *peer) {
     open_asn = (*peer->local_asn > 65535) ? 23456 : (uint16_t)*peer->local_asn;
 
     log_print(LOG_DEBUG, "Sending OPEN to peer %s\n", peer->name);
-    /*For the time being, hold time is set to a static 5 minutes. Likely
-     * negotiated down by the peer as their hold time will be lower */
-    queue_and_send_open(peer, *peer->version, open_asn, 600, *peer->local_rid, caps);
+    queue_and_send_open(peer, *peer->version, open_asn,
+                        peer->peer_timers.conf_hold_time, *peer->local_rid, caps);
 
     start_timer(peer->local_timers, HoldTimer);
     peer->fsm_state = OPENSENT;

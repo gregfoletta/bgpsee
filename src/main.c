@@ -28,6 +28,7 @@ struct cmdline_opts {
     enum bgp_output format;
     int reconnect_enabled;
     int reconnect_max_retries;
+    uint16_t hold_time;
     int _error;
 };
 
@@ -100,6 +101,8 @@ int main(int argc, char **argv) {
         set_bgp_output(bgp_i, bgp_peer_id, options.format);
         //Set reconnection settings
         set_bgp_reconnect(bgp_i, bgp_peer_id, options.reconnect_enabled, options.reconnect_max_retries);
+        //Set hold time
+        set_bgp_hold_time(bgp_i, bgp_peer_id, options.hold_time);
 
         bgp_peer_ids[ bgp_peer_id ] = 1;
 
@@ -154,6 +157,7 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
         .format = BGP_OUT_JSON,
         .reconnect_enabled = 0,
         .reconnect_max_retries = 0,
+        .hold_time = 600,
         .name = calloc(MAX_PEER_NAME_LEN, sizeof(char)),
         ._error = 0
     };
@@ -175,6 +179,7 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
         { "format", required_argument, 0, 'f'},
         { "reconnect", no_argument, NULL, 'R'},
         { "max-retries", required_argument, NULL, 'm'},
+        { "hold-time", required_argument, NULL, 't'},
         { "help", no_argument, NULL, 'h'},
         { 0, 0, 0, 0 }
     };
@@ -182,7 +187,7 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
     char *out_fmts[] = { "json", "jsonl" };
 
     while (1) {
-        c = getopt_long(argc, argv, "s:a:r:l:f:Rm:h", cmdline_options, i);
+        c = getopt_long(argc, argv, "s:a:r:l:f:Rm:t:h", cmdline_options, i);
 
         if (c == -1) {
             break;
@@ -219,6 +224,9 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
             case 'm':
                 option_return.reconnect_max_retries = (int) strtol(optarg, NULL, 10);
                 break;
+            case 't':
+                option_return.hold_time = (uint16_t) strtoul(optarg, NULL, 10);
+                break;
         }
     }
 
@@ -229,12 +237,13 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
 void print_help(void) {
     char *help_message = "Usage: bgpsee [options...] <peer> [<peer> ...]\n"
         "-s, --source <ip>\tIP to source BGP connection from\n"
-        "-a, --asn <asn>\t\tLocal ASN of bgpsee. If not provided 65000 will be used.\n"
+        "-a, --asn <asn>\t\tLocal ASN (supports 4-byte ASNs). Default: 65000\n"
         "-r, --rid <ip>\t\tLocal router ID of bgpsee. If not provided 1.1.1.1 will be used.\n"
         "-l, --logging <level>\tLogging output level, 0: BGP messages only, 1: Errors, 2: Warnings, 3: Info (default), 4: Debug \n"
         "-f, --format <fmt>\tFormat of the output, <fmt> may be 'json' (pretty) or 'jsonl' (single line). Defaults to 'json'\n"
         "-R, --reconnect\t\tEnable automatic reconnection with exponential backoff\n"
         "-m, --max-retries <n>\tMaximum reconnection attempts (0 = infinite, default)\n"
+        "-t, --hold-time <sec>\tBGP hold time in seconds (default: 600)\n"
         "-h, --help\t\tPrint this help message\n"
         "\n"
         "<peer> formats: <ip>,<asn> or <ip>,<asn>,<name>\n\n";

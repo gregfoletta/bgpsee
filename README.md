@@ -37,7 +37,12 @@ In short, BGPSee establishes a session, receives UPDATEs, and outputs them as JS
 
 # Version
 
-Current version is **0.0.8**
+Current version is **0.0.9**
+
+Major changes from **0.0.8** to **0.0.9**:
+- VPNv4/MPLS-VPN address family parsing (RFC 4364)
+- ADD-PATH capability infrastructure (RFC 7911)
+- Configurable BGP hold time (`--hold-time` option, default 600s)
 
 Major changes from **0.0.7** to **0.0.8**:
 - 4-byte ASN support (RFC 6793)
