@@ -46,7 +46,7 @@ DEBUG_LDFLAGS := -ljansson -pthread $(BREW_LDFLAGS) $(GCC_STATIC_ASAN) -fsanitiz
 TEST_CFLAGS := -Wall -g3 -Wno-unused-parameter $(BREW_CFLAGS) -fsanitize=address,undefined
 TEST_LDFLAGS := -ljansson -pthread $(BREW_LDFLAGS) -fsanitize=address,undefined
 
-.PHONY: all debug clean test test-byte-conv test-bgp-message
+.PHONY: all debug clean test test-byte-conv test-bgp-message integration-test
 
 # Default target: optimized release build
 all: $(BIN)
@@ -89,3 +89,8 @@ $(TEST_DIR)/test_byte_conv: $(TEST_DIR)/test_byte_conv.c $(TEST_DIR)/testhelp.h
 
 $(TEST_DIR)/test_bgp_message: $(TEST_DIR)/test_bgp_message.c $(TEST_DIR)/testhelp.h $(OBJ_DEBUG_DIR)/bgp_message.o $(OBJ_DEBUG_DIR)/bgp_capability.o $(OBJ_DEBUG_DIR)/log.o $(OBJ_DEBUG_DIR)/sds.o | $(OBJ_DEBUG_DIR)
 	$(CC) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_bgp_message.c $(OBJ_DEBUG_DIR)/bgp_message.o $(OBJ_DEBUG_DIR)/bgp_capability.o $(OBJ_DEBUG_DIR)/log.o $(OBJ_DEBUG_DIR)/sds.o $(TEST_LDFLAGS)
+
+# Integration test target (requires Docker and FRR)
+integration-test: $(BIN)
+	@chmod +x $(TEST_DIR)/integration/run_integration_tests.sh
+	@$(TEST_DIR)/integration/run_integration_tests.sh

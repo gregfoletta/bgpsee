@@ -78,3 +78,24 @@ jobs:
 
     - name: Run tests
       run: make test
+
+  integration-test:
+    name: Integration Test (FRR Docker)
+    runs-on: ubuntu-latest
+    needs: build-linux
+
+    steps:
+    - name: Checkout repo and submodules
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y libjansson-dev libjson-perl
+
+    - name: Build bgpsee
+      run: make
+
+    - name: Run integration tests
+      run: make integration-test
+      timeout-minutes: 5

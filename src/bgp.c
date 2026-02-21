@@ -835,6 +835,8 @@ int fsm_state_connect(struct bgp_peer *peer) {
         bgp_capabilities_add_route_refresh(caps);
         bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV4, BGP_SAFI_UNICAST);
         bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV6, BGP_SAFI_UNICAST);
+        bgp_capabilities_add_mp_ext(caps, BGP_AFI_IPV4, BGP_SAFI_MPLS_VPN);  /* VPNv4 */
+        bgp_capabilities_add_mp_ext(caps, BGP_AFI_L2VPN, BGP_SAFI_EVPN);     /* EVPN */
         bgp_capabilities_add_four_octet_asn(caps, *peer->local_asn);
     }
 
