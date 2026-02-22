@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdint.h>
+#include <arpa/inet.h>
 
 #include "bgp.h"
 #include "bgp_cli.h"
@@ -205,9 +206,15 @@ struct cmdline_opts parse_cmdline(int argc, char **argv) {
             case 'a':
                 option_return.local_asn = (uint32_t) strtoul(optarg, NULL, 10);
                 break;
-            case 'r':
-                option_return.local_rid = (uint16_t) strtol(optarg, NULL, 10);
+            case 'r': {
+                struct in_addr addr;
+                if (inet_pton(AF_INET, optarg, &addr) != 1) {
+                    fprintf(stderr, "Invalid router ID: %s\n", optarg);
+                    exit(1);
+                }
+                option_return.local_rid = ntohl(addr.s_addr);
                 break;
+            }
             case 'l':
                 option_return.log_level = (uint16_t) strtol(optarg, NULL, 10);
                 break;

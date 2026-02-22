@@ -46,7 +46,7 @@ DEBUG_LDFLAGS := -ljansson -pthread $(BREW_LDFLAGS) $(GCC_STATIC_ASAN) -fsanitiz
 TEST_CFLAGS := -Wall -g3 -Wno-unused-parameter $(BREW_CFLAGS) -fsanitize=address,undefined
 TEST_LDFLAGS := -ljansson -pthread $(BREW_LDFLAGS) -fsanitize=address,undefined
 
-.PHONY: all debug clean test test-byte-conv test-bgp-message integration-test
+.PHONY: all debug clean test test-byte-conv test-bgp-message test-bgp-print integration-test
 
 # Default target: optimized release build
 all: $(BIN)
@@ -70,10 +70,10 @@ $(OBJ_DIR) $(OBJ_DEBUG_DIR):
 	mkdir -p $@
 
 clean:
-	@$(RM) -rv $(OBJ_DIR) $(OBJ_DEBUG_DIR) $(BIN) $(TEST_DIR)/test_byte_conv $(TEST_DIR)/test_bgp_message
+	@$(RM) -rv $(OBJ_DIR) $(OBJ_DEBUG_DIR) $(BIN) $(TEST_DIR)/test_byte_conv $(TEST_DIR)/test_bgp_message $(TEST_DIR)/test_bgp_print
 
 # Test targets (use debug flags for better error detection)
-test: test-byte-conv test-bgp-message
+test: test-byte-conv test-bgp-message test-bgp-print
 	@echo "All tests completed"
 
 test-byte-conv: $(TEST_DIR)/test_byte_conv
@@ -89,6 +89,13 @@ $(TEST_DIR)/test_byte_conv: $(TEST_DIR)/test_byte_conv.c $(TEST_DIR)/testhelp.h
 
 $(TEST_DIR)/test_bgp_message: $(TEST_DIR)/test_bgp_message.c $(TEST_DIR)/testhelp.h $(OBJ_DEBUG_DIR)/bgp_message.o $(OBJ_DEBUG_DIR)/bgp_capability.o $(OBJ_DEBUG_DIR)/log.o $(OBJ_DEBUG_DIR)/sds.o | $(OBJ_DEBUG_DIR)
 	$(CC) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_bgp_message.c $(OBJ_DEBUG_DIR)/bgp_message.o $(OBJ_DEBUG_DIR)/bgp_capability.o $(OBJ_DEBUG_DIR)/log.o $(OBJ_DEBUG_DIR)/sds.o $(TEST_LDFLAGS)
+
+test-bgp-print: $(OBJ_DEBUG) $(TEST_DIR)/test_bgp_print
+	@echo "Running BGP print tests..."
+	@./$(TEST_DIR)/test_bgp_print
+
+$(TEST_DIR)/test_bgp_print: $(TEST_DIR)/test_bgp_print.c $(TEST_DIR)/testhelp.h $(OBJ_DEBUG_DIR)/bgp_print.o $(OBJ_DEBUG_DIR)/bgp_capability.o $(OBJ_DEBUG_DIR)/sds.o | $(OBJ_DEBUG_DIR)
+	$(CC) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_bgp_print.c $(OBJ_DEBUG_DIR)/bgp_print.o $(OBJ_DEBUG_DIR)/bgp_capability.o $(OBJ_DEBUG_DIR)/sds.o $(TEST_LDFLAGS)
 
 # Integration test target (requires Docker and FRR)
 integration-test: $(BIN)

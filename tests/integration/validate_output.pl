@@ -274,6 +274,30 @@ for my $msg (@update_msgs) {
 test($has_origin, "ORIGIN attribute present in UPDATE");
 test($has_as_path, "AS_PATH attribute present in UPDATE");
 
+# Test 8a: NEXT_HOP byte order validation
+# FRR's router-id is 172.28.0.2, so NEXT_HOP should be "172.28.0.2", not "2.0.28.172"
+my $has_correct_next_hop = 0;
+my $has_reversed_next_hop = 0;
+for my $msg (@update_msgs) {
+    my $update = $msg->{message};
+    if (exists $update->{path_attributes} && exists $update->{path_attributes}{NEXT_HOP}) {
+        my $nh = $update->{path_attributes}{NEXT_HOP};
+        if ($nh eq '172.28.0.2') {
+            $has_correct_next_hop = 1;
+        } elsif ($nh eq '2.0.28.172') {
+            $has_reversed_next_hop = 1;
+        }
+    }
+}
+if ($has_reversed_next_hop) {
+    fail("NEXT_HOP byte order correct", "Got reversed '2.0.28.172' instead of '172.28.0.2'");
+} elsif ($has_correct_next_hop) {
+    pass("NEXT_HOP byte order correct");
+} else {
+    # No NEXT_HOP in IPv4 unicast - might be using MP_REACH_NLRI
+    print "[INFO] No traditional NEXT_HOP attribute found (IPv4 unicast routes may use MP_REACH_NLRI)\n";
+}
+
 # Test 9: IPv4 Unicast routes received
 print "\n--- IPv4 Unicast Route Tests ---\n";
 print "Received IPv4 prefixes: " . join(', ', @received_ipv4_prefixes) . "\n" if @received_ipv4_prefixes;

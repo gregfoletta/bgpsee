@@ -55,8 +55,9 @@ void initialise_output(struct bgp_peer *peer) {
 
 
 /*
- * The assumption here is that we're using this after we've pulled
- * the IPv4 address off the network, thus it's in host byte order,
+ * Convert an IPv4 address to dotted-quad string.
+ *
+ * The input should be in host byte order (converted via uchar_be_to_uint32).
  */
 char *ipv4_string(uint32_t ipv4) {
     uint8_t octets[4];
@@ -79,10 +80,10 @@ char *ipv4_string(uint32_t ipv4) {
         ipv4_string,
         MAX_IPV4_STRING,
         "%d.%d.%d.%d",
-        octets[3],
-        octets[2],
+        octets[0],
         octets[1],
-        octets[0]
+        octets[2],
+        octets[3]
     );
 
     return ipv4_string;
