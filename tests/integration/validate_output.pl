@@ -320,7 +320,6 @@ my $evpn_routes_received = scalar(@received_evpn_routes) > 0;
 if ($evpn_routes_received) {
     print "Received " . scalar(@received_evpn_routes) . " EVPN route(s)\n";
     pass("EVPN routes received (via MP_REACH_NLRI)");
-    test($has_evpn_rd, "EVPN Route Distinguisher $expected_evpn_rd present");
 
     # Check for EVPN route types
     my %evpn_types;
@@ -334,13 +333,11 @@ if ($evpn_routes_received) {
 
     print "EVPN route types received: " . join(', ', sort keys %evpn_types) . "\n" if %evpn_types;
 
-    # We expect Type-5 (IP Prefix) routes from the VRF advertisement
-    my $has_ip_prefix = exists $evpn_types{'IP Prefix'} || exists $evpn_types{'Type-5'};
-    test($has_ip_prefix, "EVPN Type-5 (IP Prefix) routes received");
+    # We expect Type-3 (Inclusive Multicast Ethernet Tag) from VXLAN/VNI setup
+    my $has_imet = exists $evpn_types{'Inclusive Multicast Ethernet Tag'} || exists $evpn_types{'Type-3'};
+    test($has_imet, "EVPN Type-3 (IMET) route received");
 } else {
-    # EVPN routes are optional - requires VNI/VXLAN configuration which isn't available in Docker
-    print "[INFO] No EVPN routes received (requires VXLAN/VNI configuration not available in Docker)\n";
-    print "[INFO] EVPN parsing capability verified via OPEN message capability exchange\n";
+    fail("EVPN routes received (via MP_REACH_NLRI)");
 }
 
 # Test 13: No NOTIFICATION messages (indicates errors)

@@ -63,7 +63,7 @@ cleanup() {
     fi
 
     # Remove output file
-    rm -f "$OUTPUT_FILE"
+    #rm -f "$OUTPUT_FILE"
 }
 
 check_prerequisites() {
